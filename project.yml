@@ -25,6 +25,7 @@ targets:
     type: application
     platform: iOS
     sources:
+      # Includes App/PrivacyInfo.xcprivacy, which xcodegen puts in the Resources phase.
       - path: App
       # Shown in Settings › 关于多多随身 › 开源许可.
       - path: LICENSE
