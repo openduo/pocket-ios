@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>dev.openduo.passport-sim</string>
+	<key>CFBundleName</key>
+	<string>PassportSim</string>
+	<key>CFBundleExecutable</key>
+	<string>PassportSim</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>PassportSim plays the Passport side of the 多多随身 BLE link for testing.</string>
+</dict>
+</plist>
