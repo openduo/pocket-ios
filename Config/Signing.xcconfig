@@ -1,0 +1,10 @@
+// Copyright 2026 openduo
+// SPDX-License-Identifier: FSL-1.1-Apache-2.0
+
+// Signing settings. The team is personal: put it in Config/Signing.local.xcconfig (gitignored):
+//   DEVELOPMENT_TEAM = ABCDE12345
+// A team that cannot register dev.openduo.pocket overrides the bundle id there too:
+//   POCKET_BUNDLE_ID = com.example.pocket
+CODE_SIGN_STYLE = Automatic
+POCKET_BUNDLE_ID = dev.openduo.pocket
+#include? "Signing.local.xcconfig"

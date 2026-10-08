@@ -1,0 +1,42 @@
+# Build outputs
+.build/
+.build-vendor/
+build/
+DerivedData/
+*.xcodeproj/
+*.xcworkspace/
+!Packages/**/*.xcworkspace/
+.swiftpm/
+Vendor/
+Packages/PocketKit/Vendor/
+Tools/**/logs/
+Bridge/tsbridge/*.xcframework
+Bridge/tsbridge/*.aar
+Bridge/tsbridge/*.jar
+*.xcuserstate
+xcuserdata/
+
+# Local signing and environment (Team ID, device ids, hosts)
+Config/Signing.local.xcconfig
+.env
+.env.*
+
+# Private working files and agent notes; never committed
+CLAUDE.local.md
+AGENTS.override.md
+HANDOFF.md
+.agents/
+.claude/
+
+# Logs, recordings, crash reports
+*.log
+*.jsonl
+*.ips
+*.wav
+*.aiff
+*.opus
+.DS_Store
+
+# Design intermediates (icon rounds, superseded mockups, screenshots): kept on disk, not published.
+# Only the final icon (docs/design/icon/final) is tracked.
+docs/design/archive/

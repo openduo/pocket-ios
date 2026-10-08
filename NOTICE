@@ -1,0 +1,17 @@
+多多随身 (DuoDuo Pocket)
+Copyright 2026 openduo
+
+The source code in this repository is licensed under FSL-1.1-Apache-2.0 (see LICENSE).
+
+Brand assets are excluded from that licence. They are OpenDuo brand assets with no open
+licence, and forks must replace them:
+
+- the 多多随身 app icon: App/Assets.xcassets/AppIcon.appiconset and docs/design/icon/final
+  (including the drawing that docs/design/icon/final/src/build.py produces);
+- the 多多 / DuoDuo and OpenDuo names;
+- design mockups and screen renders of the app.
+
+The 多多 avatar artwork (App/Assets.xcassets/avatar-*.imageset, from openduo/ambient) is code-licensed
+under FSL-1.1-Apache-2.0, as in ambient.
+
+Bundled third-party code keeps its own licences; see THIRD_PARTY_NOTICES.md.
