@@ -8,7 +8,7 @@ probes on an iPhone XS Max and the Passport during development.
 
 | Name | Value | Kind | Basis |
 |---|---|---|---|
-| `protoMajor` / `protoMinor` | 1 / 1 | fixed | `docs/ble-protocol.md` §7; minor 1 adds WORK |
+| `protoMajor` / `protoMinor` | 1 / 2 | fixed | `docs/ble-protocol.md` §7; minor 1 adds WORK, minor 2 adds the APP_STATE language byte |
 | PDU header | 4 bytes | fixed | `docs/ble-protocol.md` §6 |
 | Fragment payload | ATT value − 4 | derived at runtime | phone: `maximumWriteValueLength(.withoutResponse)`; 512-byte updates measured on an iPhone XS Max |
 | `maxMessageBytes` | 4096 | fixed (`docs/ble-protocol.md` §6) | the Passport keeps one reply; its measured minimum free heap is 26.9 KB, so 4 KiB is ~15 %. ≈1,300 CJK chars. Largest device message is one Opus packet (RFC 6716 max 1,275 B) + 4 |
