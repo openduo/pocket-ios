@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: FSL-1.1-Apache-2.0
 
 # Builds upstream libopus (xiph.org release tarball, SHA-256 pinned) into
-# Packages/PocketKit/Vendor/Opus.xcframework: static frameworks for iOS
+# Packages/PocketKit/Vendor/Opus.xcframework: static libraries for iOS
 # devices, the iOS simulator and macOS (the Passport simulator and host
 # tests). Why upstream and not a wrapper package: see docs/opus.md.
 set -eu
@@ -38,24 +38,17 @@ build_slice() { # name system sysroot
     -DOPUS_PRESUME_NEON=ON -DOPUS_DRED=OFF -DOPUS_OSCE=OFF -DOPUS_DEEP_PLC=OFF -DOPUS_INSTALL_PKG_CONFIG_MODULE=OFF \
     -DOPUS_INSTALL_CMAKE_CONFIG_MODULE=OFF >/dev/null
   cmake --build "$b" --config Release -j 8 >/dev/null
-  fw="$WORK/fw-$name/Opus.framework"
-  rm -rf "$WORK/fw-$name" && mkdir -p "$fw/Headers" "$fw/Modules"
-  cp "$b/libopus.a" "$fw/Opus"
+  # A static library plus headers, not a framework: Xcode embeds every framework from a
+  # package binary target, and a static one becomes an empty stub in the app bundle.
+  lib="$WORK/lib-$name"
+  rm -rf "$lib" && mkdir -p "$lib/Headers/Opus"
+  cp "$b/libopus.a" "$lib/libopus.a"
   # The single-stream API is all the app uses; the other headers stay out of the module.
-  cp "$WORK/src/include/opus.h" "$WORK/src/include/opus_types.h" "$WORK/src/include/opus_defines.h" "$fw/Headers/"
-  printf 'framework module Opus {\n  umbrella header "opus.h"\n  export *\n}\n' > "$fw/Modules/module.modulemap"
-  cat > "$fw/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleIdentifier</key><string>org.xiph.opus</string>
-<key>CFBundleName</key><string>Opus</string>
-<key>CFBundleExecutable</key><string>Opus</string>
-<key>CFBundlePackageType</key><string>FMWK</string>
-<key>CFBundleShortVersionString</key><string>$VERSION</string>
-<key>CFBundleVersion</key><string>$VERSION</string>
-</dict></plist>
-PLIST
+  cp "$WORK/src/include/opus.h" "$WORK/src/include/opus_types.h" "$WORK/src/include/opus_defines.h" \
+    "$lib/Headers/Opus/"
+  # Inside Headers/Opus so clang finds it for `import Opus` and `#include <Opus/opus.h>`.
+  printf 'module Opus {\n  umbrella header "opus.h"\n  export *\n}\n' \
+    > "$lib/Headers/Opus/module.modulemap"
 }
 
 build_slice ios iOS iphoneos
@@ -65,9 +58,9 @@ build_slice mac Darwin macosx
 rm -rf "$OUT"
 mkdir -p "$(dirname "$OUT")"
 xcodebuild -create-xcframework \
-  -framework "$WORK/fw-ios/Opus.framework" \
-  -framework "$WORK/fw-sim/Opus.framework" \
-  -framework "$WORK/fw-mac/Opus.framework" \
+  -library "$WORK/lib-ios/libopus.a" -headers "$WORK/lib-ios/Headers" \
+  -library "$WORK/lib-sim/libopus.a" -headers "$WORK/lib-sim/Headers" \
+  -library "$WORK/lib-mac/libopus.a" -headers "$WORK/lib-mac/Headers" \
   -output "$OUT" >/dev/null
 cp "$WORK/src/COPYING" "$OUT/COPYING"
 echo "built $OUT (libopus $VERSION)"
