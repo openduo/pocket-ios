@@ -148,20 +148,13 @@ struct ImageViewer: View {
     let url: URL
     let name: String
     @Environment(\.dismiss) private var dismiss
-    @State private var scale: CGFloat = 1
 
     var body: some View {
         ZStack(alignment: .top) {
             Color.black.ignoresSafeArea()
             if let img = UIImage(contentsOfFile: url.path) {
-                Image(uiImage: img)
-                    .resizable()
-                    .scaledToFit()
-                    .scaleEffect(scale)
-                    .gesture(MagnifyGesture().onChanged { scale = max(1, $0.magnification) }.onEnded { _ in
-                        withAnimation { scale = 1 }
-                    })
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ZoomableImage(image: img)
+                    .ignoresSafeArea()
                     .accessibilityLabel(String(localized: "图片 \(name)"))
             }
             HStack {
@@ -174,6 +167,74 @@ struct ImageViewer: View {
                     .accessibilityLabel(String(localized: "分享"))
             }
             .padding()
+        }
+    }
+}
+
+/// Pinch to zoom, pan, double-tap to toggle fit and 1:1. The zoom stays where the fingers leave it.
+private struct ZoomableImage: UIViewRepresentable {
+    let image: UIImage
+
+    func makeUIView(context: Context) -> ZoomScrollView { ZoomScrollView(image: image) }
+    func updateUIView(_ view: ZoomScrollView, context: Context) {}
+}
+
+final class ZoomScrollView: UIScrollView, UIScrollViewDelegate {
+    private let imageView: UIImageView
+    private var fittedBounds: CGSize = .zero
+
+    init(image: UIImage) {
+        imageView = UIImageView(image: image)
+        super.init(frame: .zero)
+        delegate = self
+        showsVerticalScrollIndicator = false
+        showsHorizontalScrollIndicator = false
+        contentInsetAdjustmentBehavior = .never
+        decelerationRate = .fast
+        imageView.contentMode = .scaleAspectFit
+        addSubview(imageView)
+        let tap = UITapGestureRecognizer(target: self, action: #selector(doubleTap(_:)))
+        tap.numberOfTapsRequired = 2
+        addGestureRecognizer(tap)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard bounds.size != fittedBounds, bounds.width > 0, bounds.height > 0 else { return center() }
+        fittedBounds = bounds.size
+        let size = imageView.image?.size ?? .zero
+        guard size.width > 0, size.height > 0 else { return }
+        let fit = min(bounds.width / size.width, bounds.height / size.height)
+        zoomScale = 1
+        imageView.frame = CGRect(origin: .zero, size: CGSize(width: size.width * fit, height: size.height * fit))
+        contentSize = imageView.frame.size
+        // Upper bound: one image pixel per screen pixel; past it there is no more detail to show.
+        let pixels = (imageView.image?.scale ?? 1) * size.width
+        let shown = imageView.frame.width * (window?.screen.scale ?? traitCollection.displayScale)
+        minimumZoomScale = 1
+        maximumZoomScale = max(1, pixels / shown)
+        center()
+    }
+
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
+    func scrollViewDidZoom(_ scrollView: UIScrollView) { center() }
+
+    /// Keeps the image centred while it is smaller than the view.
+    private func center() {
+        let dx = max(0, (bounds.width - contentSize.width) / 2)
+        let dy = max(0, (bounds.height - contentSize.height) / 2)
+        contentInset = UIEdgeInsets(top: dy, left: dx, bottom: dy, right: dx)
+    }
+
+    @objc private func doubleTap(_ g: UITapGestureRecognizer) {
+        if zoomScale > minimumZoomScale {
+            setZoomScale(minimumZoomScale, animated: true)
+        } else {
+            let p = g.location(in: imageView)
+            let w = bounds.width / maximumZoomScale, h = bounds.height / maximumZoomScale
+            zoom(to: CGRect(x: p.x - w / 2, y: p.y - h / 2, width: w, height: h), animated: true)
         }
     }
 }
