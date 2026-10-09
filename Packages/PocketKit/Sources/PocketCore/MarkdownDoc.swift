@@ -45,6 +45,22 @@ public enum MarkdownDoc {
         return doc.children.compactMap(block)
     }
 
+    /// The text without Markdown syntax, one line per block (table rows joined with " · "), for
+    /// places that show a message as plain lines, such as a quote preview.
+    public static func plainText(_ text: String) -> String {
+        func lines(_ b: Block) -> [String] {
+            switch b {
+            case let .heading(_, a), let .paragraph(a): return [String(a.characters)]
+            case let .list(_, items): return items.flatMap { $0.blocks.flatMap(lines) }
+            case let .quote(bs): return bs.flatMap(lines)
+            case let .code(_, t): return [t]
+            case let .table(t): return ([t.header] + t.rows).map { $0.map { String($0.characters) }.joined(separator: " · ") }
+            case .rule: return []
+            }
+        }
+        return parse(text).flatMap(lines).joined(separator: "\n")
+    }
+
     /// The link target when its scheme is allowed, otherwise nil.
     public static func safeURL(_ destination: String?) -> URL? {
         guard let destination, let url = URL(string: destination.trimmingCharacters(in: .whitespaces)),

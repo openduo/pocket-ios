@@ -23,7 +23,7 @@ struct Composer: View {
                     RoundedRectangle(cornerRadius: 1).fill(Palette.brand).frame(width: 2)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(String(localized: "回复多多")).font(.caption2.weight(.semibold)).foregroundStyle(Palette.brand)
-                        Text(q).font(.caption).lineLimit(2).foregroundStyle(Palette.secondary)
+                        Text(MarkdownDoc.plainText(q)).font(.caption).lineLimit(2).foregroundStyle(Palette.secondary)
                     }
                     Spacer(minLength: 4)
                     Button { model.quote = nil } label: { Image(systemName: "xmark.circle.fill") }

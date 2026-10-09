@@ -134,10 +134,10 @@ final class TryChannel: @unchecked Sendable {
         }
         let speech = "c-" + utt
         at(Self.stepDelay) {
+            let spoke = self.speak(id: speech, audio: turn.audio)
             self.append(ImlogEntry(at: self.now(), speaker: ImlogEntry.duoduoLabel, kind: "answer", text: turn.text,
-                                   utt_id: utt, unspoken: !self.edgeListening))
+                                   utt_id: utt, unspoken: !spoke))
             self.frame(["type": "answer_final", "speech_id": speech, "utt_id": utt, "text": turn.text])
-            self.speak(id: speech, audio: turn.audio)
             if let f = turn.file, let url = Bundle.main.url(forResource: f.resource, withExtension: "md"),
                let data = try? Data(contentsOf: url) {
                 let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
@@ -209,8 +209,9 @@ final class TryChannel: @unchecked Sendable {
                 if !greeted {
                     greeted = true
                     let hello = TryScript.ambientHello
-                    append(ImlogEntry(at: now(), speaker: ImlogEntry.duoduoLabel, kind: "answer", text: hello.text))
-                    speak(id: "c-try-hello", audio: hello.audio)
+                    let spoke = speak(id: "c-try-hello", audio: hello.audio)
+                    append(ImlogEntry(at: now(), speaker: ImlogEntry.duoduoLabel, kind: "answer", text: hello.text,
+                                      unspoken: !spoke))
                 }
             case "hush":
                 edgeText(["type": "stop_audio"])
@@ -227,10 +228,13 @@ final class TryChannel: @unchecked Sendable {
 
     /// Declares the speech and sends the bundled clip as 20 ms Opus packets, as the channel does
     /// for TTS. Only when ambient mode is listening; a typed chat is not read aloud.
-    private func speak(id: String, audio: String) {
-        guard edgeListening, let edge, let packets = Self.packets(audio) else { return }
+    /// Returns whether it was spoken.
+    @discardableResult
+    private func speak(id: String, audio: String) -> Bool {
+        guard edgeListening, let edge, let packets = Self.packets(audio) else { return false }
         edgeText(["type": "speech", "speech_id": id])
         for p in packets { edge.onBinary?(p) }
+        return true
     }
 
     /// The bundled clip decoded to 16 kHz mono and encoded with the app's own Opus encoder.

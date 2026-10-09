@@ -98,4 +98,9 @@ final class MarkdownDocTests: XCTestCase {
     func testPlainTextIsOneParagraph() {
         XCTAssertEqual(MarkdownDoc.parse("hello"), [.paragraph(AttributedString("hello"))])
     }
+
+    func testPlainText() {
+        let md = "## Title\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n- **x**"
+        XCTAssertEqual(MarkdownDoc.plainText(md), "Title\na · b\n1 · 2\nx")
+    }
 }

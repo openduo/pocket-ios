@@ -37,6 +37,8 @@ final class AppModel: ObservableObject {
     @Published var draftText = ""
     /// The DuoDuo message the next typed send replies to (long-press 「回复」).
     @Published var quote: String?
+    /// Counts the user's own sends; the thread follows each one to the end.
+    @Published var sentCount = 0
     @Published var chips: [DraftChip] = []
     @Published var holding = false
     /// The finger left the hold button while recording: releasing now cancels.
@@ -220,6 +222,7 @@ final class AppModel: ObservableObject {
         if !voiceInput { draftText = "" }
         quote = nil
         chips = []
+        sentCount += 1
         Haptics.send()
         ConversationStore.shared.sendText(text, attachments: atts)
     }
@@ -332,7 +335,7 @@ final class AppModel: ObservableObject {
         AmbientController.shared.pressEnded()
         let keep = send && !tooShort
         // Release feedback is immediate; the packets arrive once the capture has stopped.
-        if keep { Haptics.send() } else { Haptics.cancel() }
+        if keep { Haptics.send(); sentCount += 1 } else { Haptics.cancel() }
         if tooShort { toast = String(localized: "按住说话") }
         VoiceIO.shared.stopNote(keep: keep) { packets in
             guard keep, !packets.isEmpty else { return }

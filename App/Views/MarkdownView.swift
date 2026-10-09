@@ -53,6 +53,7 @@ private struct BlockView: View {
                             .font(.body.monospacedDigit())
                             .foregroundStyle(Palette.secondary)
                         MarkdownView(blocks: item.blocks, color: color)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             }
