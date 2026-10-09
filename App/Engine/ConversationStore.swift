@@ -88,7 +88,9 @@ final class ConversationStore: @unchecked Sendable {
             changed()
             return
         }
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        // Try-it mode keeps its room in a temporary directory that is removed on exit.
+        let base = TryMode.active ? TryMode.cacheBase
+            : FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let id = ReplyTracker.replyID("\(settings.host.lowercased())|\(settings.room)")
         let dir = base.appendingPathComponent("rooms/\(String(id, radix: 16))", isDirectory: true)
         roomDir = dir

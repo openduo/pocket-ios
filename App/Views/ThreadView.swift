@@ -156,8 +156,12 @@ struct MineBubble: View {
                         if text.isEmpty, voiceSource != nil {
                             VoiceGlyph().frame(width: 96, height: 16)
                         }
-                        if !text.isEmpty {
-                            Text(linkified(text))
+                        let parts = UserQuote.split(text)
+                        if let q = parts.quote {
+                            QuoteLine(text: q)
+                        }
+                        if !parts.text.isEmpty {
+                            Text(linkified(parts.text))
                                 .font(.body)
                                 .tint(Palette.mineText)
                                 .textSelection(.enabled)
@@ -219,6 +223,7 @@ struct MetaLine: View {
 }
 
 struct DuoduoBubble: View {
+    @EnvironmentObject var model: AppModel
     var rowID: String
     var text: String
     var at: Date?
@@ -240,14 +245,15 @@ struct DuoduoBubble: View {
                 AttachmentView(attachment: a, mine: false)
             }
             if hasText {
-                Text(linkified(text))
-                    .font(.body)
-                    .foregroundStyle(Palette.theirsText)
-                    .textSelection(.enabled)
+                MarkdownView(text)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
                     .background(BubbleShape(mine: false, tail: true).fill(Palette.theirsFill))
                     .contextMenu {
+                        Button {
+                            model.voiceInput = false
+                            model.quote = text
+                        } label: { Label(String(localized: "回复"), systemImage: "arrowshape.turn.up.left") }
                         Button { UIPasteboard.general.string = text } label: { Label(String(localized: "拷贝"), systemImage: "doc.on.doc") }
                         ShareLink(item: text) { Label(String(localized: "分享"), systemImage: "square.and.arrow.up") }
                     }
@@ -456,9 +462,7 @@ struct WorkingBubble: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if working.phase == .streaming {
-                (Text(working.text) + Text(" ▍").foregroundColor(Palette.brand))
-                    .font(.body)
-                    .foregroundStyle(Palette.theirsText)
+                MarkdownView(working.text)
                 Text(String(localized: "正在生成…")).font(.caption2).foregroundStyle(Palette.brand)
             } else {
                 HStack(spacing: 6) {
@@ -554,5 +558,20 @@ struct VoiceGlyph: View {
             }
         }
         .accessibilityHidden(true)
+    }
+}
+
+/// The DuoDuo message a typed reply quotes, inside the user's own bubble: a bar and a few lines.
+/// The full quote was sent; the bubble only shortens how much of it is drawn.
+struct QuoteLine: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 1).fill(Palette.mineText.opacity(0.5)).frame(width: 2)
+            Text(text).font(.caption).lineLimit(3).opacity(0.8)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityLabel(String(localized: "引用：\(text)"))
     }
 }

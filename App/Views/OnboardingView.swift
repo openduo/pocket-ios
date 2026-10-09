@@ -51,6 +51,10 @@ struct OnboardingView: View {
             Button(String(localized: "登录 Tailscale")) { TailnetLogin.shared.start(model.tailnet) }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(model.tailnet.auth_url == nil)
+            Button(String(localized: "先体验")) { model.startTrying() }
+                .font(.body.weight(.semibold))
+                .foregroundStyle(Palette.brand)
+                .accessibilityHint(String(localized: "不连接网络，用演示数据试用所有功能"))
             Link(String(localized: "什么是 Tailscale?"), destination: URL(string: "https://tailscale.com/kb/1151/what-is-tailscale")!)
                 .font(.subheadline)
         }

@@ -51,7 +51,8 @@ final class Tailnet: @unchecked Sendable {
     }
 
     func status() -> TailnetStatus {
-        (try? JSONDecoder().decode(TailnetStatus.self, from: Data(TsbridgeStatus().utf8))) ?? .unknown
+        if TryMode.active { return TailnetStatus(backend_state: "Running") }
+        return (try? JSONDecoder().decode(TailnetStatus.self, from: Data(TsbridgeStatus().utf8))) ?? .unknown
     }
 
     var tsnetLog: URL? {
@@ -61,6 +62,7 @@ final class Tailnet: @unchecked Sendable {
 
     /// Waits for tsnet Running. Throws `TransportFailure.notConnected` with the backend state.
     func up(timeout: TimeInterval) throws {
+        if TryMode.active { return }
         var err: NSError?
         TsbridgeUp(Int64(timeout * 1000), &err)
         if let err {
@@ -81,6 +83,7 @@ final class Tailnet: @unchecked Sendable {
     /// One blocking request over tsnet. Throws `TransportFailure` when no response arrived.
     func request(method: String, path: String, headers: [String: String] = [:], body: Data = Data(),
                  timeout: TimeInterval, upTimeout: TimeInterval) throws -> (status: Int, body: Data) {
+        if TryMode.active { return TryChannel.shared.request(method: method, path: path, headers: headers, body: body) }
         try up(timeout: min(timeout, upTimeout))
         let hdr = String(decoding: try JSONSerialization.data(withJSONObject: headers), as: UTF8.self)
         var err: NSError?
@@ -119,9 +122,10 @@ final class DisplaySocket: NSObject, TsbridgeFrameHandlerProtocol, @unchecked Se
         TsbridgeSetHandler(self)
     }
 
-    var isOpen: Bool { TsbridgeWSIsOpen() }
+    var isOpen: Bool { TryMode.active ? TryChannel.shared.displayOpen(self) : TsbridgeWSIsOpen() }
 
     func open(room: ChannelSettings, timeout: TimeInterval) throws {
+        if TryMode.active { return TryChannel.shared.openDisplay(self) }
         try Tailnet.shared.up(timeout: timeout)
         var err: NSError?
         TsbridgeWSOpen("/live?room=\(room.roomQuery)", Int64(timeout * 1000), &err)
@@ -129,12 +133,16 @@ final class DisplaySocket: NSObject, TsbridgeFrameHandlerProtocol, @unchecked Se
     }
 
     func ping(timeout: TimeInterval) -> Bool {
+        if TryMode.active { return TryChannel.shared.displayOpen(self) }
         var err: NSError?
         TsbridgeWSPing(Int64(timeout * 1000), &err)
         return err == nil
     }
 
-    func close() { TsbridgeWSClose() }
+    func close() {
+        TryChannel.shared.closeDisplay(self)
+        TsbridgeWSClose()
+    }
 
     func onText(_ text: String?) {
         // Frames are per conversation event, never per audio packet (binary goes to the edge).
@@ -161,9 +169,10 @@ final class EdgeSocket: NSObject, TsbridgeEdgeHandlerProtocol, @unchecked Sendab
         TsbridgeSetEdgeHandler(self)
     }
 
-    var isOpen: Bool { TsbridgeEdgeIsOpen() }
+    var isOpen: Bool { TryMode.active ? TryChannel.shared.edgeOpen(self) : TsbridgeEdgeIsOpen() }
 
     func open(room: ChannelSettings, timeout: TimeInterval) throws {
+        if TryMode.active { return TryChannel.shared.openEdge(self) }
         try Tailnet.shared.up(timeout: timeout)
         var err: NSError?
         TsbridgeEdgeOpen("/live?room=\(room.roomQuery)", Int64(timeout * 1000), &err)
@@ -171,15 +180,21 @@ final class EdgeSocket: NSObject, TsbridgeEdgeHandlerProtocol, @unchecked Sendab
     }
 
     /// Closes after the frames already queued have been written (each write is bounded).
-    func close() { sendQueue.sync { TsbridgeEdgeClose() } }
+    func close() {
+        TryChannel.shared.closeEdge(self)
+        sendQueue.sync { TsbridgeEdgeClose() }
+    }
 
     func send(json: [String: Any]) {
+        if TryMode.active { return TryChannel.shared.edgeReceived(json) }
         guard let d = try? JSONSerialization.data(withJSONObject: json) else { return }
         let s = String(decoding: d, as: UTF8.self)
         sendQueue.async { var e: NSError?; TsbridgeEdgeSendText(s, &e) }
     }
 
+    /// In try-it mode the microphone's packets go nowhere: nothing leaves the phone.
     func send(packet: Data) {
+        if TryMode.active { return }
         sendQueue.async { var e: NSError?; TsbridgeEdgeSendBinary(packet, &e) }
     }
 

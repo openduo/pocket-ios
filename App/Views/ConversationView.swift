@@ -18,6 +18,7 @@ struct ConversationView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                if model.trying { TryBanner() }
                 Banners()
                 ZStack(alignment: .bottom) {
                     if model.chat.rows.isEmpty, model.chat.configured, !model.chat.hasHistory {
@@ -336,5 +337,24 @@ struct EmptyState: View {
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Palette.theirsFill))
+    }
+}
+
+/// Always visible while trying: the content is prepared, not DuoDuo's own.
+struct TryBanner: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "sparkles").accessibilityHidden(true)
+            Text(String(localized: "体验模式 · 演示数据，不连接网络")).font(.footnote.weight(.semibold))
+            Spacer(minLength: 4)
+            Button(String(localized: "退出体验")) { model.stopTrying() }
+                .font(.footnote.weight(.semibold))
+        }
+        .foregroundStyle(Palette.brand)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Palette.brandWash)
     }
 }

@@ -18,6 +18,21 @@ struct Composer: View {
 
     var body: some View {
         VStack(spacing: 8) {
+            if let q = model.quote {
+                HStack(spacing: 8) {
+                    RoundedRectangle(cornerRadius: 1).fill(Palette.brand).frame(width: 2)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(String(localized: "回复多多")).font(.caption2.weight(.semibold)).foregroundStyle(Palette.brand)
+                        Text(q).font(.caption).lineLimit(2).foregroundStyle(Palette.secondary)
+                    }
+                    Spacer(minLength: 4)
+                    Button { model.quote = nil } label: { Image(systemName: "xmark.circle.fill") }
+                        .foregroundStyle(Palette.tertiary)
+                        .accessibilityLabel(String(localized: "取消回复"))
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
+            }
             if !model.chips.isEmpty { ChipsRow() }
             HStack(alignment: .bottom, spacing: 8) {
                 Button {
@@ -73,6 +88,7 @@ struct Composer: View {
         .padding(.bottom, 6)
         .background(Palette.background)
         .overlay(alignment: .top) { Rectangle().fill(Palette.hairline).frame(height: 0.5) }
+        .onChange(of: model.quote) { _, q in if q != nil { focused = true } }
         .photosPicker(isPresented: $showPhotos, selection: $photos, maxSelectionCount: nil, matching: .images)
         .onChange(of: photos) { _, items in
             photos = []

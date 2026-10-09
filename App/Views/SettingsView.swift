@@ -16,12 +16,22 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                if model.trying {
+                    Section {
+                        Button(String(localized: "退出体验")) {
+                            dismiss()
+                            model.stopTrying()
+                        }
+                    } footer: {
+                        Text(String(localized: "体验模式里的消息、录音和文件只留在这台手机上，退出后全部清除。"))
+                    }
+                }
                 Section {
                     NavigationLink { ConnectionEditor(mode: .settings) } label: {
                         row("link", Palette.brand, String(localized: "频道主机"), model.settings.host.isEmpty ? String(localized: "未设置") : model.settings.host)
                     }
                     NavigationLink { ConnectionEditor(mode: .settings) } label: {
-                        row("number", Palette.brand, String(localized: "房间"), model.chat.room?.roomName ?? model.settings.room)
+                        row("number", Palette.brand, String(localized: "房间"), model.settings.room, caption: roomCaption)
                     }
                     NavigationLink { TailscaleDetail() } label: {
                         row("shield.lefthalf.filled", Palette.ok, "Tailscale", tailnetText, stacked: true)
@@ -119,7 +129,15 @@ struct SettingsView: View {
         }
     }
 
-    private func row(_ icon: String, _ color: Color, _ title: String, _ value: String, stacked: Bool = false) -> some View {
+    /// The channel's display name for the room, when it differs from the ID. It is user data and
+    /// is shown as entered, in any UI language.
+    private var roomCaption: String? {
+        guard let name = model.chat.room?.roomName, !name.isEmpty, name != model.settings.room else { return nil }
+        return name
+    }
+
+    private func row(_ icon: String, _ color: Color, _ title: String, _ value: String, stacked: Bool = false,
+                     caption: String? = nil) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .font(.footnote.weight(.semibold))
@@ -133,7 +151,14 @@ struct SettingsView: View {
                 }
                 Spacer()
             } else {
-                Text(title)
+                if let caption {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                        Text(caption).font(.caption).foregroundStyle(Palette.tertiary)
+                    }
+                } else {
+                    Text(title)
+                }
                 Spacer()
                 Text(value).foregroundStyle(Palette.tertiary).lineLimit(1).truncationMode(.middle)
             }

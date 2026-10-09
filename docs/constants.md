@@ -38,6 +38,9 @@ probes on an iPhone XS Max and the Passport during development.
 | tsnet hostname | `duoduo-pocket` | fixed | node name shown in the tailnet admin console |
 | tsnet status timeout | 2 s | fixed (Go), **no data** | an in-process local-API call; bounds a status read for the UI only |
 | `ChannelSettings.defaultPort` / HTTPS default | 443 / on | default setting | `tailscale serve` publishes HTTPS on 443 |
+| `TryChannel.stepDelay` | 0.9 s | display, **no data** | try-it mode only: spaces the scripted thinking and tool frames so the steps can be read; a real turn's timing comes from the brain |
+| Image viewer max zoom | image pixels ÷ fitted screen pixels (≥ 1) | derived | one image pixel per screen pixel; further zoom shows no more detail |
+| Quote length | none | — | `<user-quote>` carries the whole quoted message; the bubble draws three lines of it |
 
 ## Native app (design `docs/design/native-app.md`)
 

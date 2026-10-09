@@ -58,7 +58,7 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDevelopmentRegion: zh-Hans
-        CFBundleDisplayName: 多多随身
+        CFBundleDisplayName: 多多
         CFBundleName: DuoDuo Pocket
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
@@ -76,7 +76,9 @@ targets:
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
-        ITSAppUsesNonExemptEncryption: false
+        # The embedded Tailscale node (WireGuard: ChaCha20-Poly1305, Curve25519) implements
+        # standard published algorithms itself rather than calling the OS; declared, not exempt.
+        ITSAppUsesNonExemptEncryption: true
 schemes:
   DuoduoPocket:
     build:

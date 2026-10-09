@@ -51,5 +51,8 @@ Device signing reads `DEVELOPMENT_TEAM` (and optionally `POCKET_BUNDLE_ID`) from
 - Source comments and commit messages are English; user-facing Chinese strings stay Chinese.
 - Debug fixtures and probes (`-PocketDemo`, `-PocketPlaybackProbe`, `-PocketHoldProbe`) stay inside
   `#if DEBUG`.
+- 先体验 (`App/TryMode/`) ships in Release: an in-app scripted channel behind the same transport
+  calls (`Tailnet.request`, the display and edge sockets). It never starts network traffic of its
+  own, keeps nothing after exit, and its answers say they are prepared.
 - Design intermediates (icon rounds, superseded mockups, screenshots) go to the gitignored
   `docs/design/archive/`; only final designs that docs reference are tracked.
