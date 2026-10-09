@@ -187,6 +187,47 @@ enum Demo {
             let row = ImlogEntry(at: at(0, 9, 39), speaker: "多多", kind: "answer", text: answer, unspoken: true)
             turn.settle(with: [row])
             entries.append(row)
+        case "chat-markdown":
+            let md = L("""
+            ## 本周安排
+
+            | 时间 | 事项 | 地点 |
+            |---|---|---|
+            | 周二 10:00 | 产品评审 | 3 号会议室 |
+            | 周四 15:00 | 给妈妈打电话 | — |
+            | 周五 16:00 | 提交测试版，附上演示视频和隐私政策链接 | 线上 |
+
+            **要准备的：**
+            1. 评审前把演示视频剪好
+            2. 确认 [隐私政策](https://openduo.ai) 能打开
+
+            ```sh
+            duoduo channel ambient room add pocket --workspace ~/pocket --runtime claude --pocket
+            ```
+
+            > 图片 ![截图](https://example.com/a.png) 不会自动加载。
+            """, """
+            ## This week
+
+            | When | What | Where |
+            |---|---|---|
+            | Tue 10:00 | Product review | Room 3 |
+            | Thu 15:00 | Call Mom | — |
+            | Fri 16:00 | Submit the beta with the demo video and the privacy link | Online |
+
+            **To prepare:**
+            1. Cut the demo video before the review
+            2. Check the [privacy policy](https://openduo.ai) opens
+
+            ```sh
+            duoduo channel ambient room add pocket --workspace ~/pocket --runtime claude --pocket
+            ```
+
+            > The image ![screenshot](https://example.com/a.png) is not loaded.
+            """)
+            entries.append(ImlogEntry(at: at(0, 11, 2), speaker: "多多", kind: "answer", text: md, unspoken: true))
+            entries.append(ImlogEntry(at: at(0, 11, 3), kind: "typed",
+                                      text: UserQuote.compose(quote: md, text: L("周五几点截止？", "When is the Friday deadline?")), utt_id: "q1"))
         case "voice-states":
             entries = [ImlogEntry(at: at(0, 9, 54), kind: "typed", text: L("下午的会几点开始", "What time is the afternoon meeting?"), utt_id: "v0"),
                        ImlogEntry(at: at(0, 9, 55), speaker: "多多", kind: "answer", text: L("两点半，在 3 号会议室，你之前标了要带上季度的数据。", "2:30 in room 3. You noted to bring last quarter's numbers."), unspoken: true),

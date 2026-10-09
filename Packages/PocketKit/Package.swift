@@ -15,8 +15,12 @@ let package = Package(
         .library(name: "PocketCore", targets: ["PocketCore"]),
         .library(name: "PocketOpus", targets: ["PocketOpus"]),
     ],
+    dependencies: [
+        // DuoDuo's answers are Markdown; parsed here, drawn by the app.
+        .package(url: "https://github.com/swiftlang/swift-markdown.git", .upToNextMinor(from: "0.9.0")),
+    ],
     targets: [
-        .target(name: "PocketCore"),
+        .target(name: "PocketCore", dependencies: [.product(name: "Markdown", package: "swift-markdown")]),
         // Built by scripts/build-opus.sh; not tracked.
         .binaryTarget(name: "Opus", path: "Vendor/Opus.xcframework"),
         .target(name: "COpusShim", dependencies: ["Opus"]),

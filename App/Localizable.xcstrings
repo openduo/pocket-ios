@@ -265,6 +265,16 @@
         }
       }
     },
+    "不连接网络，用演示数据试用所有功能": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Try every feature with demo data, without connecting"
+          }
+        }
+      }
+    },
     "主机": {
       "localizations": {
         "en": {
@@ -305,6 +315,26 @@
         }
       }
     },
+    "体验模式 · 演示数据，不连接网络": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Try-it mode · demo data, not connected"
+          }
+        }
+      }
+    },
+    "体验模式里的消息、录音和文件只留在这台手机上，退出后全部清除。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Messages, recordings and files in try-it mode stay on this phone and are all deleted when you exit."
+          }
+        }
+      }
+    },
     "保存": {
       "localizations": {
         "en": {
@@ -341,6 +371,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Charging"
+          }
+        }
+      }
+    },
+    "先体验": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Try it first"
           }
         }
       }
@@ -505,6 +545,16 @@
         }
       }
     },
+    "取消回复": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel reply"
+          }
+        }
+      }
+    },
     "取消静音": {
       "localizations": {
         "en": {
@@ -611,6 +661,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "echo cancellation off"
+          }
+        }
+      }
+    },
+    "回复": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reply"
+          }
+        }
+      }
+    },
+    "回复多多": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replying to DuoDuo"
           }
         }
       }
@@ -925,6 +995,16 @@
         }
       }
     },
+    "已拷贝": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copied"
+          }
+        }
+      }
+    },
     "已暂停": {
       "localizations": {
         "en": {
@@ -1031,6 +1111,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Open-source licences"
+          }
+        }
+      }
+    },
+    "引用：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quote: %@"
           }
         }
       }
@@ -2473,6 +2563,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Log out of Tailscale?"
+          }
+        }
+      }
+    },
+    "退出体验": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exit try-it mode"
           }
         }
       }

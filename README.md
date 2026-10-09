@@ -2,6 +2,10 @@
 
 iPhone client for one ambient room, and the phone side of the Passport push-to-talk accessory.
 
+DuoDuo Pocket puts your DuoDuo in your pocket: hold a button, say what you need, let go, and the
+answer comes back to the phone and the Passport screen. Product page:
+[openduo.ai/docs/pocket](https://openduo.ai/docs/pocket).
+
 - A native SwiftUI conversation with 多多 for one room: text, photos and files, hold-to-talk,
   and an ambient mode in which the phone listens to the room and speaks the answers
   (`docs/design/native-app.md`). History comes from the channel and is cached for offline reading.
@@ -10,6 +14,16 @@ iPhone client for one ambient room, and the phone side of the Passport push-to-t
   Opus over BLE while its button is held; the app uploads one voice note per press, tells the
   Passport the transcript, and forwards the answer to its screen.
 - Hold-to-talk in the app records with the phone microphone and uses the same voice-note path.
+
+## What it needs
+
+- [duoduo](https://github.com/openduo/duoduo), the DuoDuo daemon, on your host.
+- The ambient channel, [`@openduo/channel-ambient`](https://www.npmjs.com/package/@openduo/channel-ambient)
+  from [openduo/ambient](https://github.com/openduo/ambient), beside the daemon with a pocket room,
+  reachable on your tailnet. The `duoduo-ambient` skill walks your duoduo through it:
+  `npx -y skills add https://github.com/openduo/duoduo --skill duoduo-ambient`.
+- Optionally, a FoloToy AI Passport running the pocket firmware from
+  [openduo/pocket-passport](https://github.com/openduo/pocket-passport).
 
 ## Architecture
 

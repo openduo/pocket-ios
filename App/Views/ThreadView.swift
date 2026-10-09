@@ -8,13 +8,18 @@ struct ThreadView: View {
     @EnvironmentObject var model: AppModel
     /// The end of the thread is on screen (or within the rows the lazy stack keeps built).
     @State private var atBottom = true
+    /// Height of the visible area. The content is at least this tall, rows at its bottom, so the
+    /// scroll offset never goes negative: with a negative offset (short thread under a bottom
+    /// anchor) a scroll to the end row moved the rows a second screen down, off screen.
+    @State private var viewport: CGFloat = 0
     private static let bottomID = "thread-bottom"
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 6) {
-                    OlderHeader()
+                    // The try-it room has no earlier days.
+                    if !model.trying { OlderHeader() }
                     ForEach(model.chat.rows) { row in
                         RowView(row: row).id(row.id)
                     }
@@ -24,6 +29,7 @@ struct ThreadView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
+                .frame(minHeight: viewport, alignment: .bottom)
             }
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
@@ -35,6 +41,17 @@ struct ThreadView: View {
                 guard atBottom else { return }
                 DispatchQueue.main.async { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
             }
+            // A send of one's own always lands at the end, and so does coming back from the ambient
+            // call view: while it covered the thread, the end row counted as scrolled away.
+            .onChange(of: model.sentCount) { _, _ in follow(proxy) }
+            .onChange(of: model.ambientExpanded) { _, open in if !open { follow(proxy) } }
+            // Same failure when the viewport changes height (the ambient bar or a banner comes or
+            // goes, the composer grows): the kept offset can point below the last row.
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
+                viewport = h
+                guard atBottom else { return }
+                DispatchQueue.main.async { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+            }
             // The bottom anchor keeps the newest row in view, so a row that grows pushes its own
             // top upwards; an opened step list is brought back to the top of the screen.
             .environment(\.revealRow) { id in
@@ -42,6 +59,13 @@ struct ThreadView: View {
                 withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .top) }
             }
         }
+    }
+}
+
+extension ThreadView {
+    fileprivate func follow(_ proxy: ScrollViewProxy) {
+        atBottom = true
+        DispatchQueue.main.async { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
     }
 }
 
@@ -156,8 +180,12 @@ struct MineBubble: View {
                         if text.isEmpty, voiceSource != nil {
                             VoiceGlyph().frame(width: 96, height: 16)
                         }
-                        if !text.isEmpty {
-                            Text(linkified(text))
+                        let parts = UserQuote.split(text)
+                        if let q = parts.quote {
+                            QuoteLine(text: q)
+                        }
+                        if !parts.text.isEmpty {
+                            Text(linkified(parts.text))
                                 .font(.body)
                                 .tint(Palette.mineText)
                                 .textSelection(.enabled)
@@ -219,6 +247,7 @@ struct MetaLine: View {
 }
 
 struct DuoduoBubble: View {
+    @EnvironmentObject var model: AppModel
     var rowID: String
     var text: String
     var at: Date?
@@ -240,14 +269,15 @@ struct DuoduoBubble: View {
                 AttachmentView(attachment: a, mine: false)
             }
             if hasText {
-                Text(linkified(text))
-                    .font(.body)
-                    .foregroundStyle(Palette.theirsText)
-                    .textSelection(.enabled)
+                MarkdownView(text)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
                     .background(BubbleShape(mine: false, tail: true).fill(Palette.theirsFill))
                     .contextMenu {
+                        Button {
+                            model.voiceInput = false
+                            model.quote = text
+                        } label: { Label(String(localized: "回复"), systemImage: "arrowshape.turn.up.left") }
                         Button { UIPasteboard.general.string = text } label: { Label(String(localized: "拷贝"), systemImage: "doc.on.doc") }
                         ShareLink(item: text) { Label(String(localized: "分享"), systemImage: "square.and.arrow.up") }
                     }
@@ -456,9 +486,7 @@ struct WorkingBubble: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if working.phase == .streaming {
-                (Text(working.text) + Text(" ▍").foregroundColor(Palette.brand))
-                    .font(.body)
-                    .foregroundStyle(Palette.theirsText)
+                MarkdownView(working.text)
                 Text(String(localized: "正在生成…")).font(.caption2).foregroundStyle(Palette.brand)
             } else {
                 HStack(spacing: 6) {
@@ -554,5 +582,20 @@ struct VoiceGlyph: View {
             }
         }
         .accessibilityHidden(true)
+    }
+}
+
+/// The DuoDuo message a typed reply quotes, inside the user's own bubble: a bar and a few lines.
+/// The full quote was sent; the bubble only shortens how much of it is drawn.
+struct QuoteLine: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 1).fill(Palette.mineText.opacity(0.5)).frame(width: 2)
+            Text(MarkdownDoc.plainText(text)).font(.caption).lineLimit(3).opacity(0.8)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityLabel(String(localized: "引用：\(text)"))
     }
 }

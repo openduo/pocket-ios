@@ -35,6 +35,10 @@ final class AppModel: ObservableObject {
     @Published var settings = ChannelSettings.load()
     @Published var ambientExpanded = false
     @Published var draftText = ""
+    /// The DuoDuo message the next typed send replies to (long-press 「回复」).
+    @Published var quote: String?
+    /// Counts the user's own sends; the thread follows each one to the end.
+    @Published var sentCount = 0
     @Published var chips: [DraftChip] = []
     @Published var holding = false
     /// The finger left the hold button while recording: releasing now cancels.
@@ -58,6 +62,8 @@ final class AppModel: ObservableObject {
     @Published var toast: String?
     @Published var appearance = UserDefaults.standard.string(forKey: "ui.appearance") ?? "system"
     @Published var onboarding: Bool
+    /// 先体验 is running (`TryMode`).
+    @Published var trying = false
     /// Ticks once a second while visible, for time-based display (the ambient view's clock).
     @Published var now = Date()
 
@@ -137,6 +143,33 @@ final class AppModel: ObservableObject {
         if roomChanged, ambient.isOn { AmbientController.shared.turnOff() }
     }
 
+    // MARK: try-it mode
+
+    func startTrying() {
+        if ambient.isOn { AmbientController.shared.turnOff() }
+        TryMode.enter()
+        trying = true
+        settings = ChannelSettings.load()
+        onboarding = false
+        PocketEngine.shared.settingsChanged()
+        ConversationStore.shared.settingsChanged()
+    }
+
+    /// Drops everything the try-it room held and returns to the user's own connection, or to
+    /// onboarding when there is none.
+    func stopTrying() {
+        if ambient.isOn { AmbientController.shared.turnOff() }
+        quote = nil
+        draftText = ""
+        chips = []
+        TryMode.exit()
+        trying = false
+        settings = ChannelSettings.load()
+        onboarding = !settings.isComplete
+        PocketEngine.shared.settingsChanged()
+        ConversationStore.shared.settingsChanged()
+    }
+
     // MARK: derived display state
 
     var voiceAvailable: Bool { chat.room?.cerebellumOK != false && chat.room?.uploadsDisabled != true }
@@ -184,10 +217,12 @@ final class AppModel: ObservableObject {
 
     func send() {
         guard canSend else { return }
-        let text = sendableText
+        let text = quote.map { UserQuote.compose(quote: $0, text: sendableText) } ?? sendableText
         let atts = chips.compactMap { if case .uploaded(let a) = $0.state { a } else { nil } }
         if !voiceInput { draftText = "" }
+        quote = nil
         chips = []
+        sentCount += 1
         Haptics.send()
         ConversationStore.shared.sendText(text, attachments: atts)
     }
@@ -300,7 +335,7 @@ final class AppModel: ObservableObject {
         AmbientController.shared.pressEnded()
         let keep = send && !tooShort
         // Release feedback is immediate; the packets arrive once the capture has stopped.
-        if keep { Haptics.send() } else { Haptics.cancel() }
+        if keep { Haptics.send(); sentCount += 1 } else { Haptics.cancel() }
         if tooShort { toast = String(localized: "按住说话") }
         VoiceIO.shared.stopNote(keep: keep) { packets in
             guard keep, !packets.isEmpty else { return }
