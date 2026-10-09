@@ -76,10 +76,12 @@ targets:
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
-        # No ITSAppUsesNonExemptEncryption key: the embedded Tailscale node (WireGuard:
-        # ChaCha20-Poly1305, Curve25519) implements standard published algorithms itself, so the
-        # app is not exempt. Without an approved compliance document a `true` key is rejected at
-        # upload; the encryption questions are answered per build in App Store Connect instead.
+        # The embedded Tailscale node (WireGuard: ChaCha20-Poly1305, Curve25519) uses standard
+        # published algorithms, not proprietary ones, and the app is not on the French store.
+        # App Store Connect requires export documentation only for proprietary cryptography or
+        # third-party cryptography on the French store, so no document applies: `false`.
+        # `true` without an approved document is rejected at upload and blocks the build.
+        ITSAppUsesNonExemptEncryption: false
 schemes:
   DuoduoPocket:
     build:
