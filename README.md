@@ -15,6 +15,12 @@ answer comes back to the phone and the Passport screen. Product page:
   Passport the transcript, and forwards the answer to its screen.
 - Hold-to-talk in the app records with the phone microphone and uses the same voice-note path.
 
+## Get the app
+
+DuoDuo Pocket is in TestFlight beta. Apply with the [sign-up form](https://docs.google.com/forms/d/e/1FAIpQLSfIUllzEsHU18l3q_K1SBo8FBx-GztPhzUKotWpp74mYAIH-A/viewform); the TestFlight
+invitation arrives by email once the application is approved. Without a DuoDuo of your own,
+tap 先体验 (Try it first) on the first screen to see the app with built-in demo content.
+
 ## What it needs
 
 - [duoduo](https://github.com/openduo/duoduo), the DuoDuo daemon, on your host.
