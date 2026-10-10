@@ -6,6 +6,14 @@ DuoDuo Pocket puts your DuoDuo in your pocket: hold a button, say what you need,
 answer comes back to the phone and the Passport screen. Product page:
 [openduo.ai/docs/pocket](https://openduo.ai/docs/pocket).
 
+<p align="center">
+  <img src="docs/screens/app.png" alt="DuoDuo Pocket on iPhone: a conversation with a voice note from the Passport, hold to talk, ambient mode speaking an answer, and photos and files" width="100%">
+</p>
+<p align="center">
+  <img src="docs/screens/passport.png" alt="The Passport screen: hold OK to talk, listening, thinking with the transcript, and DuoDuo's answer" width="80%">
+</p>
+<p align="center"><sub>The app with its built-in demo content, and the Passport running the pocket firmware.</sub></p>
+
 - A native SwiftUI conversation with 多多 for one room: text, photos and files, hold-to-talk,
   and an ambient mode in which the phone listens to the room and speaks the answers
   (`docs/design/native-app.md`). History comes from the channel and is cached for offline reading.
