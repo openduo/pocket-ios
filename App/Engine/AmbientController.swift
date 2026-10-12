@@ -34,8 +34,14 @@ struct AmbientSnapshot: Equatable {
     var isOn: Bool { phase != .off }
 }
 
-/// Native ambient edge (design §7): the edge socket, the audio engine and the `AmbientEdge` state
-/// machine. All state lives on `queue`; audio callbacks hop onto it with O(1) work.
+/// Native ambient edge (design §7): the room's `/live` socket, the audio engine and the
+/// `AmbientEdge` state machine. All state lives on `queue`; audio callbacks hop onto it with O(1)
+/// work.
+///
+/// The app holds one `/live` connection, owned here. Its conversation frames go to
+/// `PocketEngine`, its audio plane to the edge. Ambient on says `hello` on the open connection;
+/// ambient off closes it, and `PocketEngine` opens a new one without `hello` (a connection cannot
+/// leave the seat). `PocketEngine` decides when the connection is wanted and reopens it.
 ///
 /// Lifecycle (decision Q3): started by the user in the foreground, continues in the background
 /// and while locked through the `audio` background mode, ended by the user. Interruptions pause
@@ -43,11 +49,11 @@ struct AmbientSnapshot: Equatable {
 final class AmbientController: @unchecked Sendable {
     static let shared = AmbientController()
 
-    /// Pause between edge-socket redials while on: the web edge's 1 s (`transport.js`).
-    static let redialDelay: TimeInterval = 1
-
     private let queue = DispatchQueue(label: "pocket.ambient", qos: .userInitiated)
-    private let socket = EdgeSocket()
+    let live = LiveSocket()
+    /// `conn` of the open connection (its first `meta`), so ambient mode turned on later can say
+    /// `hello` on it.
+    private var liveConn: String?
     private var edge = AmbientEdge()
     private var decoder: OpusVoiceDecoder?
     /// Counters of the speech being played; logged on drain and when it ends.
@@ -58,8 +64,6 @@ final class AmbientController: @unchecked Sendable {
     private var on = false
     private var interrupted = false
     private var failure: String?
-    private var dialing = false
-    private var socketGeneration = 0
 
     private let snapLock = NSLock()
     private var snap = AmbientSnapshot()
@@ -68,9 +72,17 @@ final class AmbientController: @unchecked Sendable {
     private var publishPending = false
 
     private init() {
-        socket.onText = { [weak self] t in self?.queue.async { self?.text(t) } }
-        socket.onBinary = { [weak self] d in self?.queue.async { self?.binary(d) } }
-        socket.onClosed = { [weak self] why in self?.queue.async { self?.closed(why) } }
+        live.onText = { [weak self] t in
+            // Parsed once here; one frame per conversation event, never per audio packet.
+            guard let obj = try? JSONSerialization.jsonObject(with: Data(t.utf8)) as? [String: Any] else { return }
+            self?.queue.async { self?.text(obj) }
+            PocketEngine.shared.liveFrame(obj)
+        }
+        live.onBinary = { [weak self] d in self?.queue.async { self?.binary(d) } }
+        live.onClosed = { [weak self] why in
+            self?.queue.async { self?.closed(why) }
+            PocketEngine.shared.liveClosed(why)
+        }
         VoiceIO.shared.onRebuildNeeded = { [weak self] why in self?.queue.async { self?.rebuildAudio(why) } }
         VoiceIO.shared.onRouteChanged = { [weak self] in self?.queue.async { self?.routeChanged() } }
         let nc = NotificationCenter.default
@@ -99,12 +111,19 @@ final class AmbientController: @unchecked Sendable {
             on = true
             interrupted = false
             failure = nil
-            edge = AmbientEdge(room: settings.room)
+            newEdge()
             AppLog.shared.log("ambient_on")
             startAudio()
-            dial()
+            PocketEngine.shared.ensureLive("ambient_on")
             publish()
         }
+    }
+
+    /// A fresh edge for a new capture session, told the open connection's `conn`: its `hello`
+    /// goes on that connection with the first encoded packet.
+    private func newEdge() {
+        edge = AmbientEdge(room: settings.room)
+        if let liveConn, live.isOpen { perform(edge.frame(["type": "meta", "conn": liveConn])) }
     }
 
     func turnOff() {
@@ -114,7 +133,7 @@ final class AmbientController: @unchecked Sendable {
             AppLog.shared.log("ambient_off")
             // The channel's mic switch is a room control that outlives this socket: do not leave
             // the room's mic off for the next edge (`on` = mic on).
-            if edge.helloSent, edge.muted { socket.send(json: ["type": "mute", "on": true]) }
+            if edge.helloSent, edge.muted { live.send(json: ["type": "mute", "on": true]) }
             stopAll()
             publish()
         }
@@ -140,15 +159,16 @@ final class AmbientController: @unchecked Sendable {
             failure = nil
             interrupted = false
             stopAll()
-            edge = AmbientEdge(room: settings.room)
+            newEdge()
             startAudio()
-            dial()
+            PocketEngine.shared.ensureLive("ambient_reopen")
             publish()
         }
     }
 
     /// A press (phone hold-to-talk or Passport) began or ended: mute the room for its length
-    /// (decision Q12).
+    /// (decision Q12). While ambient mode plays answers, a press also stops playback and nothing
+    /// plays until it ends (`AmbientEdge.pressBegan`).
     func pressBegan() { queue.async { [self] in perform(edge.pressBegan()); publish() } }
     func pressEnded() { queue.async { [self] in perform(edge.pressEnded()); publish() } }
 
@@ -172,13 +192,36 @@ final class AmbientController: @unchecked Sendable {
         }
     }
 
+    /// Stops capture and closes the connection: a seated connection cannot leave the seat.
+    /// `PocketEngine` opens a new one without `hello`.
     private func stopAll() {
         VoiceIO.shared.stopAmbient()
         edge.captureStopped()
-        perform(edge.socketClosed())
-        socketGeneration += 1
-        socket.close()
+        liveReplaced()
+        live.close()
         decoder = nil
+        PocketEngine.shared.ensureLive("ambient_stop")
+    }
+
+    /// The held connection is gone (closed, replaced): nothing of it carries over.
+    private func liveReplaced() {
+        liveConn = nil
+        perform(edge.socketClosed())
+    }
+
+    // MARK: the /live connection (called by PocketEngine, off the queues)
+
+    /// Opens the room's `/live` connection, replacing the held one. Blocking.
+    func openLive(_ s: ChannelSettings, since: Int?, timeout: TimeInterval) throws {
+        // The old connection's state ends before the new one's first frame can arrive.
+        queue.sync { liveReplaced(); publish() }
+        try live.open(path: ChannelPaths.live(room: s.room, since: since), timeout: timeout)
+    }
+
+    /// Closes the connection (settings changed).
+    func closeLive() {
+        queue.sync { liveReplaced(); publish() }
+        live.close()
     }
 
     private func rebuildAudio(_ why: String) {
@@ -221,9 +264,9 @@ final class AmbientController: @unchecked Sendable {
             AppLog.shared.log("ambient_interruption_ended", ["resume": resume])
             guard interrupted, resume else { break }
             interrupted = false
-            edge = AmbientEdge(room: settings.room)
+            newEdge()
             startAudio()
-            dial()
+            PocketEngine.shared.ensureLive("ambient_resume")
         default:
             break
         }
@@ -233,56 +276,29 @@ final class AmbientController: @unchecked Sendable {
     private func uplink(_ packet: Data) {
         guard on else { return }
         if !edge.capturing { perform(edge.packetEncoded()) }
-        if edge.sendsAudio, socket.isOpen { socket.send(packet: packet) }
+        if edge.sendsAudio, live.isOpen { live.send(packet: packet) }
     }
 
     // MARK: socket
 
-    private func dial() {
-        guard on, !dialing, !interrupted, failure == nil else { return }
-        dialing = true
-        socketGeneration += 1
-        let gen = socketGeneration
-        let s = settings, timeout = tuning.connectTimeout
-        DispatchQueue.global(qos: .userInitiated).async { [self] in
-            var err: String?
-            do { try socket.open(room: s, timeout: timeout) } catch { err = "\(error)" }
-            queue.async { [self] in
-                dialing = false
-                guard gen == socketGeneration, on else {
-                    if err == nil, !on { socket.close() }
-                    return
-                }
-                AppLog.shared.log("edge_dial", ["ok": err == nil, "err": err ?? "", "app": AppPhase.value])
-                if err == nil {
-                    edge.socketOpened()
-                } else {
-                    queue.asyncAfter(deadline: .now() + Self.redialDelay) { [self] in dial() }
-                }
-                publish()
-            }
-        }
-    }
-
+    /// The connection closed from the far side. `PocketEngine` redials while it wants it.
     private func closed(_ why: String) {
-        AppLog.shared.log("edge_closed", ["reason": why, "app": AppPhase.value])
-        perform(edge.socketClosed())
+        AppLog.shared.log("live_closed", ["reason": why, "app": AppPhase.value])
+        liveReplaced()
         publish()
         guard on else { return }
         // 1008: the channel refused the request (room, origin); redialling unchanged cannot help.
         if why.contains("PolicyViolation") {
             failure = String(localized: "频道拒绝了这个房间")
             publish()
-            return
         }
-        queue.asyncAfter(deadline: .now() + Self.redialDelay) { [self] in dial() }
     }
 
-    private func text(_ t: String) {
-        guard on, let obj = try? JSONSerialization.jsonObject(with: Data(t.utf8)) as? [String: Any] else { return }
+    private func text(_ obj: [String: Any]) {
         let type = obj["type"] as? String
-        // Only audio-plane frames matter here; the display socket handles the conversation.
-        guard type == "meta" || type == "audio_params" || type == "speech" || type == "stop_audio" else { return }
+        if type == "meta", let c = obj["conn"] as? String { liveConn = c }
+        // Only audio-plane frames matter here; `PocketEngine` handles the conversation.
+        guard on, type == "meta" || type == "audio_params" || type == "speech" || type == "stop_audio" else { return }
         let before = (edge.role, edge.roomState)
         if type == "speech" { endStats("replaced") }
         perform(edge.frame(obj))
@@ -306,7 +322,7 @@ final class AmbientController: @unchecked Sendable {
         for a in actions {
             switch a {
             case .send(let f):
-                socket.send(json: f)
+                live.send(json: f)
                 if let t = f["type"] as? String, t != "played" { AppLog.shared.log("edge_send", ["type": t]) }
             case .play(let packet, let gen):
                 stats?.frameReceived()

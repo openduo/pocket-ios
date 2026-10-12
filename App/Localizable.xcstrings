@@ -915,6 +915,16 @@
         }
       }
     },
+    "多多随身需要更新": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "DuoDuo Pocket needs an update"
+          }
+        }
+      }
+    },
     "多多，%@": {
       "localizations": {
         "en": {
@@ -945,6 +955,26 @@
         }
       }
     },
+    "家里的 ambient 已升级，这个版本连不上它": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your ambient at home was upgraded; this version can't talk to it"
+          }
+        }
+      }
+    },
+    "家里的 ambient 需要升级": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your ambient at home needs an upgrade"
+          }
+        }
+      }
+    },
     "对话": {
       "localizations": {
         "en": {
@@ -971,6 +1001,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Export logs"
+          }
+        }
+      }
+    },
+    "小脑与 channel 版本不一致，需要两端同时升级": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The cerebellum and the channel run different versions; upgrade both together"
           }
         }
       }
@@ -1427,6 +1467,16 @@
         }
       }
     },
+    "按 ambient 部署文档 docs/deploy.md 的 Upgrading 一节升级": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Follow the Upgrading section of ambient's docs/deploy.md"
+          }
+        }
+      }
+    },
     "按住下方的按钮说话": {
       "localizations": {
         "en": {
@@ -1573,6 +1623,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Showing cached messages. They update once connected."
+          }
+        }
+      }
+    },
+    "更新": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update"
           }
         }
       }
@@ -2915,6 +2975,16 @@
           "stringUnit": {
             "state": "translated",
             "value": ", DuoDuo can't reply right now"
+          }
+        }
+      }
+    },
+    "；小脑与 channel 版本不一致，需要两端同时升级": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "; the cerebellum and the channel run different versions, upgrade both together"
           }
         }
       }

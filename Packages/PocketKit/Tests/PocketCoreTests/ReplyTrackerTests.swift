@@ -5,6 +5,16 @@ import XCTest
 @testable import PocketCore
 
 final class ReplyTrackerTests: XCTestCase {
+    private func answer(_ text: String, ids: [String] = [], at: String = "2030-01-01T09:00:00Z") -> ImlogEntry {
+        ImlogEntry(at: at, speaker: "多多", kind: "answer", text: text, message_ids: ids)
+    }
+
+    private func final(_ text: String, ids: [String] = [], speech: String? = nil) -> [String: Any] {
+        var f: [String: Any] = ["type": "answer_final", "text": text, "message_ids": ids]
+        if let speech { f["speech_id"] = speech }
+        return f
+    }
+
     func testDeltasFoldIntoFullTextUnderOneReplyID() {
         var t = ReplyTracker()
         let a = t.handle(frame: ["type": "duoduo_said", "speech_id": "c-1", "text": "明天"])
@@ -14,7 +24,7 @@ final class ReplyTrackerTests: XCTestCase {
         }
         XCTAssertEqual(id1, id2)
         // The final answer replaces the partial text under the same id, then REPLY_DONE.
-        let f = t.handle(frame: ["type": "answer_final", "speech_id": "c-1", "utt_id": "u1", "text": "明天会下雨，带伞。"])
+        let f = t.handle(frame: final("明天会下雨，带伞。", speech: "c-1"))
         XCTAssertEqual(f, [.reply(replyID: id1, final: true, text: "明天会下雨，带伞。"), .replyDone(replyID: id1)])
     }
 
@@ -30,38 +40,53 @@ final class ReplyTrackerTests: XCTestCase {
     func testReactionsAndEmptyAnswersAreSkipped() {
         var t = ReplyTracker()
         XCTAssertEqual(t.handle(frame: ["type": "duoduo_said", "speech_id": "s9", "kind": "reaction", "text": "嗯"]), [])
-        XCTAssertEqual(t.handle(frame: ["type": "answer_final", "speech_id": "c-3", "text": "  "]), [])
+        XCTAssertEqual(t.handle(frame: final("  ", speech: "c-3")), [])
         XCTAssertEqual(t.handle(frame: ["type": "transcript", "row": [:]]), [])
+        XCTAssertEqual(t.rows([ImlogEntry(at: "x", speaker: "多多", kind: "reaction", text: "我看看")]), [])
     }
 
-    func testCatchUpDeliversLatestAnswerOnce() {
+    /// A batch of rows the phone missed (replay or `GET /api/imlog?since=`): the newest answer
+    /// goes to the device, once.
+    func testRowsDeliverTheNewestUnseenAnswer() {
         var t = ReplyTracker()
-        let log: [[String: Any]] = [
-            ["kind": "human", "text": "你好", "at": "2026-10-07T10:00:00Z"],
-            ["kind": "answer", "text": "旧回答", "at": "2026-10-07T10:00:01Z"],
-            ["kind": "typed", "text": "问题", "at": "2026-10-07T10:01:00Z"],
-            ["speaker": "多多", "text": "新回答", "at": "2026-10-07T10:01:05Z"],
-        ]
-        let out = t.catchUp(entries: log)
+        let rows = [ImlogEntry(at: "1", kind: "human", text: "你好"), answer("旧回答"),
+                    ImlogEntry(at: "2", kind: "typed", text: "问题", utt_id: "m1"), answer("新回答", ids: ["m1"])]
+        let out = t.rows(rows)
         guard case .reply(let id, true, "新回答") = out.first else { return XCTFail("\(out)") }
         XCTAssertEqual(out.last, .replyDone(replyID: id))
-        XCTAssertEqual(t.catchUp(entries: log), [])
     }
 
-    func testCatchUpSkipsARowOfFilesWithoutText() {
+    func testRowsSkipAFilesRowWithoutText() {
         var t = ReplyTracker()
-        let log: [[String: Any]] = [
-            ["speaker": "多多", "kind": "answer", "text": "发了", "at": "2026-10-07T12:34:27Z"],
-            ["speaker": "多多", "kind": "answer", "text": "", "at": "2026-10-07T12:34:28Z",
-             "attachments": [["name": "a.png", "mime": "image/png"]]],
-        ]
-        guard case .reply(_, true, "发了") = t.catchUp(entries: log).first else { return XCTFail() }
+        let files = ImlogEntry(at: "2", speaker: "多多", kind: "answer", text: "",
+                               attachments: [ChannelAttachment(name: "a.png", mime: "image/png")])
+        guard case .reply(_, true, "发了") = t.rows([answer("发了"), files]).first else { return XCTFail() }
     }
 
-    func testAnswerSeenLiveIsNotResentFromTheLog() {
+    /// The row of an answer sent live closes it: nothing is sent again, and it is forgotten.
+    func testAnswerSeenLiveIsNotResentFromItsRow() {
         var t = ReplyTracker()
-        XCTAssertEqual(t.handle(frame: ["type": "answer_final", "speech_id": "c-7", "text": "好的"]).count, 2)
-        XCTAssertEqual(t.catchUp(entries: [["kind": "answer", "text": "好的\n", "at": "x"]]), [])
+        XCTAssertEqual(t.handle(frame: final("好的", ids: ["m1"])).count, 2)
+        XCTAssertEqual(t.memory.delivered.count, 1)
+        XCTAssertEqual(t.rows([answer("好的\n", ids: ["m1"])]), [])
+        XCTAssertTrue(t.memory.delivered.isEmpty)
+    }
+
+    /// A truncated row matches the live answer by its whole text.
+    func testTruncatedRowMatchesByFullText() {
+        var t = ReplyTracker()
+        _ = t.handle(frame: final("明天上午有两个会", ids: ["m1"]))
+        var row = answer("明天上午", ids: ["m1"])
+        row.truncated = true
+        row.full_text = "明天上午有两个会"
+        XCTAssertEqual(t.rows([row]), [])
+    }
+
+    /// Two answers with the same text are two answers: the second live one is sent too.
+    func testRepeatedTextLiveIsSentAgain() {
+        var t = ReplyTracker()
+        XCTAssertEqual(t.handle(frame: final("好的")).count, 2)
+        XCTAssertEqual(t.handle(frame: final("好的")).count, 2)
     }
 
     /// A reinstall empties the memory; the time floor keeps the new ids above the old ones.
@@ -70,43 +95,27 @@ final class ReplyTrackerTests: XCTestCase {
         t.clock = { 1_800_000_000 }
         var old: [UInt32] = []
         for text in ["一", "二", "三"] {
-            guard case .reply(let id, true, _) = t.handle(frame: ["type": "answer_final", "text": text]).first else { return XCTFail() }
+            guard case .reply(let id, true, _) = t.handle(frame: final(text)).first else { return XCTFail() }
             old.append(id)
         }
         XCTAssertEqual(old, [1_800_000_000, 1_800_000_001, 1_800_000_002])
         var fresh = ReplyTracker()
         fresh.clock = { 1_800_000_060 }
-        guard case .reply(let id, true, _) = fresh.handle(frame: ["type": "answer_final", "text": "四"]).first else { return XCTFail() }
+        guard case .reply(let id, true, _) = fresh.handle(frame: final("四")).first else { return XCTFail() }
         XCTAssertGreaterThan(id, old.max()!)
     }
 
     func testDeliveredSurvivesRelaunch() {
         var t = ReplyTracker()
         t.clock = { 0 }
-        _ = t.handle(frame: ["type": "answer_final", "speech_id": "c-7", "text": "好的"])
+        _ = t.handle(frame: final("好的", ids: ["m1"], speech: "c-7"))
         var u = ReplyTracker()
         u.clock = { 0 }
         u.memory = t.memory
-        XCTAssertEqual(u.catchUp(entries: [["kind": "answer", "text": "好的"]]), [])
+        XCTAssertEqual(u.rows([answer("好的", ids: ["m1"])]), [])
         // Ids keep growing after a relaunch.
-        guard case .reply(let id, true, _) = u.handle(frame: ["type": "answer_final", "text": "新的"]).first else { return XCTFail() }
+        guard case .reply(let id, true, _) = u.handle(frame: final("新的")).first else { return XCTFail() }
         XCTAssertEqual(id, t.memory.lastReplyID + 1)
-    }
-
-    func testCatchUpSkipsReactionFillers() {
-        var t = ReplyTracker()
-        t.clock = { 0 }
-        _ = t.expect(uttID: "n1")
-        let filler: [String: Any] = ["kind": "reaction", "speaker": "多多", "text": "我看看", "at": "2030-01-01T09:00:02Z"]
-        let typed: [String: Any] = ["kind": "typed", "text": "明天几点出发", "utt_id": "n1", "at": "2030-01-01T09:00:01Z"]
-        XCTAssertEqual(t.catchUp(entries: [typed, filler]), [])
-        let answer: [String: Any] = ["kind": "answer", "speaker": "多多", "text": "八点出发", "at": "2030-01-01T09:00:05Z"]
-        guard case .reply(_, true, "八点出发") = t.catchUp(entries: [typed, filler, answer]).first else {
-            return XCTFail("the answer after the filler is the reply")
-        }
-        var idle = ReplyTracker()
-        idle.clock = { 0 }
-        XCTAssertEqual(idle.catchUp(entries: [filler]), [])
     }
 
     func testReplyIDsGrowByOneAndPartialsShareTheFinalsID() {
@@ -114,13 +123,12 @@ final class ReplyTrackerTests: XCTestCase {
         t.clock = { 0 }
         var ids: [UInt32] = []
         for (i, text) in ["一", "二", "三"].enumerated() {
-            guard case .reply(let id, true, text) = t.handle(frame: ["type": "answer_final", "speech_id": "c-\(i)",
-                                                                      "text": text]).first else { return XCTFail() }
+            guard case .reply(let id, true, text) = t.handle(frame: final(text, speech: "c-\(i)")).first else { return XCTFail() }
             ids.append(id)
         }
         XCTAssertEqual(ids, [1, 2, 3])
         guard case .reply(let p, false, _) = t.handle(frame: ["type": "duoduo_said", "speech_id": "c-9", "text": "四"]).first,
-              case .reply(let f, true, _) = t.handle(frame: ["type": "answer_final", "speech_id": "c-9", "text": "四。"]).first
+              case .reply(let f, true, _) = t.handle(frame: final("四。", speech: "c-9")).first
         else { return XCTFail() }
         XCTAssertEqual(p, 4)
         XCTAssertEqual(f, 4)
@@ -128,251 +136,120 @@ final class ReplyTrackerTests: XCTestCase {
         var w = ReplyTracker()
         w.clock = { 0 }
         w.memory.lastReplyID = .max
-        guard case .reply(let z, true, _) = w.handle(frame: ["type": "answer_final", "text": "x"]).first else { return XCTFail() }
+        guard case .reply(let z, true, _) = w.handle(frame: final("x")).first else { return XCTFail() }
         XCTAssertEqual(z, 1)
     }
 
-    func testFirstAnswerAfterTheNoteIsTheReplyWhateverItsUttID() {
+    // MARK: correlation by message_ids
+
+    func testTheAnswerNamingTheMessageIsTheReply() {
         var t = ReplyTracker()
-        t.expect(uttID: "u2")
+        t.expect(messageID: "m2")
         XCTAssertTrue(t.awaiting)
-        // Partials are not forwarded while a note waits: they may belong to an earlier answer.
-        XCTAssertEqual(t.handle(frame: ["type": "duoduo_said", "speech_id": "c-u1", "text": "别的"]), [])
-        let out = t.handle(frame: ["type": "answer_final", "utt_id": "u1", "speech_id": "c-u1", "text": "合并的回答"])
+        // Partials are not forwarded while a message waits: they name no message.
+        XCTAssertEqual(t.handle(frame: ["type": "duoduo_said", "speech_id": "c-1", "text": "别的"]), [])
+        let out = t.handle(frame: final("合并的回答", ids: ["m1", "m2"], speech: "c-1"))
         guard case .reply(let id, true, "合并的回答") = out.first else { return XCTFail("\(out)") }
         XCTAssertEqual(out.last, .replyDone(replyID: id))
         XCTAssertFalse(t.awaiting)
     }
 
-    func testExpectedAnswerWithRepeatedTextIsStillDelivered() {
+    /// An answer to other inputs is forwarded like any answer, and the wait goes on.
+    func testAnAnswerToOtherInputsDoesNotEndTheWait() {
         var t = ReplyTracker()
-        _ = t.handle(frame: ["type": "answer_final", "utt_id": "u1", "text": "好的"])
-        t.expect(uttID: "u2")
-        XCTAssertEqual(t.handle(frame: ["type": "answer_final", "utt_id": "u2", "text": "好的"]).count, 2)
-        XCTAssertFalse(t.awaiting)
-    }
-
-    func testWithoutUttIDTheNextAnswerIsTheReply() {
-        var t = ReplyTracker()
-        t.expect(uttID: nil)
-        XCTAssertEqual(t.handle(frame: ["type": "answer_final", "utt_id": "zz", "text": "下一条"]).count, 2)
-        XCTAssertFalse(t.awaiting)
-    }
-
-    func testCatchUpMatchesExpectedUtterance() {
-        var t = ReplyTracker()
-        t.expect(uttID: "u9")
-        let log: [[String: Any]] = [
-            ["kind": "answer", "utt_id": "u9", "text": "对的回答", "at": "1"],
-            ["kind": "answer", "utt_id": "u8", "text": "更晚的别的回答", "at": "2"],
-        ]
-        guard case .reply(_, true, "对的回答") = t.catchUp(entries: log).first else { return XCTFail() }
-        XCTAssertFalse(t.awaiting)
-        var u = ReplyTracker()
-        u.expect(uttID: "u10")
-        XCTAssertEqual(u.catchUp(entries: log), [])
-        XCTAssertTrue(u.awaiting)
-    }
-
-    /// Rows in the channel's shape: `utt_id` on the typed row only.
-    private let roomLog: [[String: Any]] = [
-        ["at": "2030-01-01T09:00:00.000Z", "speaker": NSNull(), "kind": "typed", "text": "明天有什么安排",
-         "utt_id": "inj-1700000000000-4242-8", "voice_source": "passport"],
-        ["at": "2030-01-01T09:00:20.000Z", "speaker": "多多", "kind": "answer", "text": "明天上午有两个会", "unspoken": true],
-        ["at": "2030-01-01T09:02:30.000Z", "speaker": NSNull(), "kind": "typed", "text": "出门要带什么？",
-         "utt_id": "inj-1700000000000-4242-9", "voice_source": "passport"],
-        ["at": "2030-01-01T09:02:33.000Z", "speaker": "多多", "kind": "answer",
-         "text": "记得带伞和充电器", "unspoken": true],
-    ]
-
-    /// The answer was logged while the display socket was down, so no `answer_final` reached the
-    /// phone. The catch-up must deliver the row even though it carries no `utt_id`.
-    func testAnswerLoggedWhileSocketWasDownIsDeliveredByCatchUp() {
-        var t = ReplyTracker()
-        _ = t.handle(frame: ["type": "answer_final", "utt_id": "inj-1700000000000-4242-8",
-                             "speech_id": "c-inj-1700000000000-4242-8", "text": "明天上午有两个会"])
-        XCTAssertEqual(t.expect(uttID: "inj-1700000000000-4242-9"), [.work(phase: .received, label: "")])
-        let out = t.catchUp(entries: roomLog)
-        guard case .reply(let id, true, "记得带伞和充电器") = out.first else {
-            return XCTFail("\(out)")
-        }
-        XCTAssertEqual(out.last, .replyDone(replyID: id))
-        XCTAssertFalse(t.awaiting)
-        // Later catch-ups (every KEEPALIVE) do not resend it, and no WORK follows the reply.
-        XCTAssertEqual(t.catchUp(entries: roomLog), [])
-        XCTAssertEqual(t.handle(frame: ["type": "turn", "utt_id": NSNull(), "phase": "thinking"]), [])
-    }
-
-    func testCatchUpWaitsWhileTheAnswerIsNotLoggedYet() {
-        var t = ReplyTracker()
-        t.expect(uttID: "inj-1700000000000-4242-9")
-        // The previous answer precedes the typed row: it is not this utterance's reply.
-        XCTAssertEqual(t.catchUp(entries: Array(roomLog.prefix(3))), [])
+        t.expect(messageID: "m2")
+        XCTAssertEqual(t.handle(frame: final("房间里的回答", ids: [])).count, 2)
+        XCTAssertEqual(t.handle(frame: final("别的消息的回答", ids: ["m1"])).count, 2)
+        XCTAssertTrue(t.awaiting)
+        XCTAssertEqual(t.handle(frame: ["type": "turn", "phase": "idle", "message_ids": ["m1"]]), [])
         XCTAssertTrue(t.awaiting)
     }
 
-    func testCatchUpSkipsAFilesRowAfterTheTypedRow() {
+    func testWithoutAMessageIDTheNextAnswerIsTheReply() {
         var t = ReplyTracker()
-        t.expect(uttID: "u1")
-        let log: [[String: Any]] = [
-            ["kind": "typed", "text": "发张图", "utt_id": "u1", "at": "1"],
-            ["speaker": "多多", "kind": "answer", "text": "", "at": "2", "attachments": [["name": "a.png"]]],
-            ["speaker": "多多", "kind": "answer", "text": "图发了", "at": "3"],
-            ["speaker": "多多", "kind": "answer", "text": "更晚的", "at": "4"],
-        ]
-        guard case .reply(_, true, "图发了") = t.catchUp(entries: log).first else { return XCTFail() }
+        t.expect(messageID: nil)
+        XCTAssertEqual(t.handle(frame: final("下一条", ids: ["zz"])).count, 2)
+        XCTAssertFalse(t.awaiting)
+    }
+
+    /// The answer came while the socket was down: its row (replayed or fetched) names the
+    /// message and is the reply, even with a newer answer in the batch.
+    func testRowsDeliverTheAnswerNamingTheWaitedMessage() {
+        var t = ReplyTracker()
+        t.expect(messageID: "m9")
+        let rows = [answer("对的回答", ids: ["m9"]), answer("更晚的别的回答", ids: ["m8"])]
+        let out = t.rows(rows)
+        guard case .reply(let id, true, "对的回答") = out.first else { return XCTFail("\(out)") }
+        XCTAssertEqual(out.last, .replyDone(replyID: id))
+        XCTAssertFalse(t.awaiting)
+    }
+
+    func testRowsWithoutTheWaitedMessageForwardTheNewestAndKeepWaiting() {
+        var t = ReplyTracker()
+        t.expect(messageID: "m10")
+        guard case .reply(_, true, "更晚的") = t.rows([answer("早的", ids: ["m8"]), answer("更晚的", ids: ["m9"])]).first
+        else { return XCTFail() }
+        XCTAssertTrue(t.awaiting)
     }
 
     // MARK: work status (docs/ble-protocol.md §9)
 
-    func testWaitStartSendsWorkReceived() {
+    func testWorkReceivedFollowsTheMessagesDelivery() {
         var t = ReplyTracker()
-        XCTAssertEqual(t.expect(uttID: "u1"), [.work(phase: .received, label: "")])
-    }
-
-    func testTurnFramesBecomeWorkOnlyWhileWaiting() {
-        var t = ReplyTracker()
-        XCTAssertEqual(t.handle(frame: ["type": "turn", "utt_id": NSNull(), "phase": "thinking"]), [])
-        t.expect(uttID: "u1")
-        XCTAssertEqual(t.handle(frame: ["type": "turn", "utt_id": NSNull(), "phase": "thinking"]),
+        t.expect(messageID: "m1")
+        // Work of a turn that is not the message's comes before its delivery: nothing.
+        XCTAssertEqual(t.handle(frame: ["type": "turn", "phase": "thinking", "message_ids": []]), [])
+        XCTAssertEqual(t.handle(frame: ["type": "turn", "phase": "received", "message_ids": []]), [])
+        XCTAssertEqual(t.handle(frame: ["type": "turn", "phase": "received", "message_ids": ["m1"]]),
+                       [.work(phase: .received, label: "")])
+        XCTAssertEqual(t.handle(frame: ["type": "turn", "phase": "thinking", "message_ids": []]),
                        [.work(phase: .thinking, label: "")])
         // The tool label is not forwarded in v1.
-        XCTAssertEqual(t.handle(frame: ["type": "turn", "phase": "tool", "label": "web_search"]),
+        XCTAssertEqual(t.handle(frame: ["type": "turn", "phase": "tool", "label": "web_search", "message_ids": ["m1"]]),
                        [.work(phase: .tool, label: "")])
-        for phase in ["received", "speaking", "done", "later"] {
-            XCTAssertEqual(t.handle(frame: ["type": "turn", "phase": phase]), [], phase)
+        for phase in ["speaking", "done", "later"] {
+            XCTAssertEqual(t.handle(frame: ["type": "turn", "phase": phase, "message_ids": ["m1"]]), [], phase)
         }
         XCTAssertTrue(t.awaiting)
     }
 
+    func testTurnFramesBecomeWorkOnlyWhileWaiting() {
+        var t = ReplyTracker()
+        XCTAssertEqual(t.handle(frame: ["type": "turn", "phase": "received", "message_ids": ["m1"]]), [])
+        XCTAssertEqual(t.handle(frame: ["type": "turn", "phase": "thinking", "message_ids": ["m1"]]), [])
+    }
+
     func testAnswerEndsTheWaitAndALaterIdleIsIgnored() {
         var t = ReplyTracker()
-        t.expect(uttID: "u1")
-        _ = t.handle(frame: ["type": "turn", "phase": "thinking"])
-        let out = t.handle(frame: ["type": "answer_final", "utt_id": "u1", "speech_id": "c-1", "text": "好的"])
+        t.expect(messageID: "m1")
+        _ = t.handle(frame: ["type": "turn", "phase": "received", "message_ids": ["m1"]])
+        let out = t.handle(frame: final("好的", ids: ["m1"], speech: "c-1"))
         XCTAssertEqual(out.count, 2)
         guard case .replyDone(let id) = out.last else { return XCTFail("\(out)") }
         XCTAssertNotEqual(id, PocketConstants.noReplyID)
         XCTAssertFalse(t.awaiting)
-        XCTAssertEqual(t.handle(frame: ["type": "turn", "phase": "idle"]), [])
+        XCTAssertEqual(t.handle(frame: ["type": "turn", "phase": "idle", "message_ids": ["m1"]]), [])
+        XCTAssertEqual(t.handle(frame: ["type": "turn", "phase": "thinking", "message_ids": []]), [])
     }
 
-    func testIdleWithoutAnswerEndsTheWaitWithReplyDoneZero() {
+    func testIdleOfTheMessagesTurnEndsTheWaitWithReplyDoneZero() {
         var t = ReplyTracker()
-        t.expect(uttID: "u1")
-        XCTAssertEqual(t.handle(frame: ["type": "turn", "utt_id": NSNull(), "phase": "thinking"]),
-                       [.work(phase: .thinking, label: "")])
-        // A log with the note and no answer after it does not end the wait.
-        XCTAssertEqual(t.catchUp(entries: [["kind": "answer", "text": "旧的", "at": "1"],
-                                           ["kind": "typed", "text": "问", "utt_id": "u1", "at": "2"]]), [])
-        XCTAssertEqual(t.handle(frame: ["type": "turn", "utt_id": NSNull(), "phase": "idle"]),
+        t.expect(messageID: "m1")
+        XCTAssertEqual(t.handle(frame: ["type": "turn", "phase": "idle", "message_ids": ["m1"]]),
                        [.work(phase: .idle, label: ""), .replyDone(replyID: PocketConstants.noReplyID)])
         XCTAssertFalse(t.awaiting)
         // A late answer still goes out as a reply.
-        let late = t.handle(frame: ["type": "answer_final", "utt_id": "u1", "speech_id": "c-9", "text": "晚到的回答"])
+        let late = t.handle(frame: final("晚到的回答", ids: ["m1"], speech: "c-9"))
         guard case .reply(_, true, "晚到的回答") = late.first else { return XCTFail("\(late)") }
     }
 
-    // MARK: one conversation: notes folded into the running turn
-
-    private func u(_ n: Int) -> String { "inj-1700000000000-5151-\(n)" }
-
-    private var batchLog: [[String: Any]] {
-        [
-            ["at": "2030-01-01T10:00:02.000Z", "kind": "typed", "text": "Okay.", "utt_id": u(7), "voice_source": "phone"],
-            ["at": "2030-01-01T10:00:45.000Z", "kind": "typed", "text": "我说的是那款新相机", "utt_id": u(9),
-             "voice_source": "passport"],
-            ["at": "2030-01-01T10:00:56.000Z", "kind": "typed", "text": "帮我查查它的评测", "utt_id": u(10),
-             "voice_source": "passport"],
-            ["at": "2030-01-01T10:01:07.000Z", "kind": "typed", "text": "A B C", "utt_id": u(11),
-             "voice_source": "passport"],
-        ]
-    }
-
-    private let foldedAnswer = "查到了，评测有三篇"
-
-    /// Notes 9, 10 and 11 go in while the brain works; it answers all of them under note 7's id.
-    /// Each press ends the previous wait, so the wait is on 11 when the answer named 7 arrives;
-    /// it must still end the wait (not with REPLY_DONE 0 on idle).
-    func testBatchedNotesAnsweredUnderAnEarlierIDEndTheWait() {
+    /// `brain_unreachable` for the waited message: no answer will come.
+    func testBrainUnreachableEndsTheWait() {
         var t = ReplyTracker()
-        for n in [9, 10, 11] {
-            t.stopExpecting() // PRESS_START of the next press
-            XCTAssertEqual(t.expect(uttID: u(n)), [.work(phase: .received, label: "")])
-        }
-        XCTAssertEqual(t.handle(frame: ["type": "turn", "utt_id": NSNull(), "phase": "tool", "label": "WebSearch"]),
-                       [.work(phase: .tool, label: "")])
-        let out = t.handle(frame: ["type": "answer_final", "utt_id": u(7), "speech_id": "ch:" + u(7), "text": foldedAnswer])
-        guard case .reply(let id, true, foldedAnswer) = out.first else { return XCTFail("\(out)") }
-        XCTAssertEqual(out, [.reply(replyID: id, final: true, text: foldedAnswer), .replyDone(replyID: id)])
+        t.expect(messageID: "m1")
+        XCTAssertEqual(t.messageFailed("m2"), [])
+        XCTAssertEqual(t.messageFailed("m1"), [.replyDone(replyID: PocketConstants.noReplyID)])
         XCTAssertFalse(t.awaiting)
-        // No WORK after the reply, no REPLY_DONE 0 on the idle that follows.
-        XCTAssertEqual(t.handle(frame: ["type": "turn", "utt_id": u(7), "phase": "idle"]), [])
-        XCTAssertEqual(t.handle(frame: ["type": "turn", "utt_id": NSNull(), "phase": "thinking"]), [])
-        // The log row of the same answer is not sent again.
-        XCTAssertEqual(t.catchUp(entries: batchLog + [["at": "2030-01-01T10:07:40.000Z", "speaker": "多多", "kind": "answer",
-                                                     "text": foldedAnswer]]), [])
-    }
-
-    /// Several notes waiting at once: the answer after the earliest of them ends every wait.
-    func testOneAnswerEndsEveryWaitingNote() {
-        var t = ReplyTracker()
-        t.expect(uttID: u(9))
-        t.expect(uttID: u(10))
-        XCTAssertEqual(t.waiting, [u(9), u(10)])
-        let log = Array(batchLog.prefix(2)) + [["at": "2030-01-01T10:00:50.000Z", "kind": "answer", "text": "先回一句"]]
-            + [batchLog[2]]
-        guard case .reply(_, true, "先回一句") = t.catchUp(entries: log).first else { return XCTFail() }
-        XCTAssertNil(t.waiting)
-    }
-
-    /// The display socket was down when the answer came: the log delivers it, under whatever
-    /// `utt_id` the row names (none, or the earlier note's).
-    func testAnswerUnderAnEarlierIDArrivesThroughCatchUpAfterSocketLoss() {
-        for named in [nil, u(7)] as [String?] {
-            var t = ReplyTracker()
-            t.expect(uttID: u(11))
-            XCTAssertEqual(t.catchUp(entries: batchLog), [])
-            var row: [String: Any] = ["at": "2030-01-01T10:07:40.000Z", "speaker": "多多", "kind": "answer", "text": foldedAnswer]
-            if let named { row["utt_id"] = named }
-            let out = t.catchUp(entries: batchLog + [row])
-            guard case .reply(let id, true, foldedAnswer) = out.first else { return XCTFail("\(String(describing: named)) \(out)") }
-            XCTAssertEqual(out.last, .replyDone(replyID: id))
-            XCTAssertFalse(t.awaiting)
-            XCTAssertEqual(t.catchUp(entries: batchLog + [row]), [])
-        }
-    }
-
-    /// An answer that arrived before the note was sent is never its reply, live or logged.
-    func testAnAnswerFromBeforeTheNoteNeverCounts() {
-        var t = ReplyTracker()
-        let old = "更早的回答"
-        // Live before the note: forwarded as an answer with nobody waiting.
-        XCTAssertEqual(t.handle(frame: ["type": "answer_final", "utt_id": u(7), "text": old]).count, 2)
-        t.expect(uttID: u(11))
-        let log = Array(batchLog.prefix(1)) + [["at": "2030-01-01T10:00:10.000Z", "speaker": "多多", "kind": "answer",
-                                               "text": old]] + Array(batchLog.dropFirst())
-        XCTAssertEqual(t.catchUp(entries: log), [])
-        // Not even an unsent one.
-        var fresh = ReplyTracker()
-        fresh.expect(uttID: u(11))
-        XCTAssertEqual(fresh.catchUp(entries: log), [])
-        XCTAssertTrue(fresh.awaiting)
-        XCTAssertEqual(fresh.handle(frame: ["type": "turn", "utt_id": NSNull(), "phase": "idle"]),
-                       [.work(phase: .idle, label: ""), .replyDone(replyID: PocketConstants.noReplyID)])
-    }
-
-    /// An answer sent while nobody waited (between PRESS_START and the note's RESULT) is the
-    /// reply the later wait needs: it goes again under its first id, so the device stores one.
-    func testRepeatClosesTheWaitUnderItsFirstID() {
-        var t = ReplyTracker()
-        guard case .reply(let first, true, foldedAnswer) = t.handle(frame: ["type": "answer_final", "utt_id": u(7), "text": foldedAnswer]).first
-        else { return XCTFail() }
-        t.expect(uttID: u(11))
-        let out = t.catchUp(entries: batchLog + [["at": "2030-01-01T10:07:40.000Z", "kind": "answer", "text": foldedAnswer]])
-        XCTAssertEqual(out, [.reply(replyID: first, final: true, text: foldedAnswer), .replyDone(replyID: first)])
-        XCTAssertEqual(t.memory.lastReplyID, first)
-        XCTAssertEqual(t.memory.delivered.filter { $0.replyID == first }.count, 1)
     }
 
     func testReplyIDIsStableAndNeverZero() {
@@ -386,35 +263,45 @@ final class ReplyTrackerTests: XCTestCase {
     /// handed is not repeated on reconnect.
     func testAnswerForNewLinkOnlyWhenTheDeviceMissedIt() {
         var t = ReplyTracker()
-        guard case .reply(let a, true, "早上好") = t.handle(frame: ["type": "answer_final", "text": "早上好"]).first
-        else { return XCTFail() }
+        guard case .reply(let a, true, "早上好") = t.handle(frame: final("早上好")).first else { return XCTFail() }
         // Link down when it arrived: the link-up replay has it.
         XCTAssertEqual(t.answerForNewLink?.replyID, a)
         t.handedToLink(replyID: a)
         XCTAssertNil(t.answerForNewLink)
-        // The same answer in the log is not sent again.
-        XCTAssertEqual(t.catchUp(entries: [["speaker": "多多", "kind": "answer", "text": "早上好"]]), [])
-        // A newer answer from background refresh while the link is down.
-        guard case .reply(let b, true, "提醒你开会") = t.catchUp(entries: [["speaker": "多多", "kind": "answer", "text": "早上好"],
-                                                                     ["speaker": "多多", "kind": "answer", "text": "提醒你开会"]]).first
+        // Its row is not sent again; a newer answer from background refresh is.
+        guard case .reply(let b, true, "提醒你开会") = t.rows([answer("早上好"), answer("提醒你开会")]).first
         else { return XCTFail() }
         XCTAssertGreaterThan(b, a)
         XCTAssertEqual(t.answerForNewLink?.text, "提醒你开会")
     }
 
-    /// The newest answer and the device's last id survive a relaunch; memories from older
-    /// builds (without those fields) still decode.
-    func testMemoryRoundTripAndOldFormat() throws {
+    func testForgetDeliveredDropsLiveAnswersWithoutRows() {
         var t = ReplyTracker()
-        _ = t.handle(frame: ["type": "answer_final", "text": "一"])
+        _ = t.handle(frame: final("一"))
+        t.forgetDelivered()
+        XCTAssertTrue(t.memory.delivered.isEmpty)
+    }
+
+    /// The newest answer and the device's last id survive a relaunch.
+    func testMemoryRoundTrip() throws {
+        var t = ReplyTracker()
+        _ = t.handle(frame: final("一", ids: ["m1"]))
         let data = try JSONEncoder().encode(t.memory)
         var u = ReplyTracker()
         u.memory = try JSONDecoder().decode(ReplyTracker.Memory.self, from: data)
         XCTAssertEqual(u.answerForNewLink?.text, "一")
-        let old = Data(#"{"delivered":[{"text":1,"replyID":3}],"lastReplyID":3}"#.utf8)
-        let m = try JSONDecoder().decode(ReplyTracker.Memory.self, from: old)
-        XCTAssertEqual(m.lastReplyID, 3)
-        XCTAssertNil(m.lastAnswer)
-        XCTAssertNil(m.linkedReplyID)
+        XCTAssertEqual(u.memory.delivered.first?.messages, ["m1"])
+    }
+
+    /// A reconnect spanned the message's `turn received`: `ready.turn` brings WORK back.
+    func testReadyTurnRestoresWork() {
+        var t = ReplyTracker()
+        t.expect(messageID: "m1")
+        XCTAssertEqual(t.restore(turn: .init(messageIDs: ["m0"], phase: "thinking")), [])
+        XCTAssertEqual(t.restore(turn: .init(messageIDs: ["m0", "m1"], phase: "tool")),
+                       [.work(phase: .received, label: ""), .work(phase: .tool, label: "")])
+        XCTAssertEqual(t.restore(turn: .init(messageIDs: ["m1"], phase: "tool")), [])
+        XCTAssertEqual(t.handle(frame: ["type": "turn", "phase": "thinking", "message_ids": []]),
+                       [.work(phase: .thinking, label: "")])
     }
 }

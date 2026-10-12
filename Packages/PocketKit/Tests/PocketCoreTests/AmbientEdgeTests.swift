@@ -164,4 +164,42 @@ final class AmbientEdgeTests: XCTestCase {
         XCTAssertEqual(e.socketClosed(), [.clearPlayback, .resetDecoder])
         XCTAssertFalse(e.speaking)
     }
+
+    /// A press stops what is playing at once, fillers too, and reports it `interrupted`.
+    func testPressStopsPlaybackAndReportsTheSpeech() {
+        var e = AmbientEdge(room: "r")
+        e.socketOpened()
+        _ = e.frame(["type": "meta", "conn": "c1"])
+        _ = e.packetEncoded()
+        _ = e.frame(["type": "speech", "speech_id": "c-1"])
+        guard case .play(_, let g) = e.binary(Data([1])).first else { return XCTFail() }
+        e.scheduled(gen: g)
+        let a = e.pressBegan()
+        XCTAssertEqual(a, [.send(["type": "mute", "on": false]), .clearPlayback, .resetDecoder,
+                           .send(["type": "interrupted", "speech_id": "c-1"])])
+        XCTAssertFalse(e.speaking)
+        // The cut block's completion is stale: no played for it.
+        XCTAssertTrue(e.played(gen: g, ms: 40).isEmpty)
+        // Nothing playing: a press reports nothing.
+        _ = e.pressEnded()
+        XCTAssertEqual(types(e.pressBegan()), ["mute"])
+    }
+
+    /// While a press is held every speech that arrives is dropped and reported; its audio is
+    /// discarded without a warning. After the press, speech plays again.
+    func testSpeechDuringAPressIsDroppedAndReported() {
+        var e = AmbientEdge()
+        _ = e.pressBegan()
+        let a = e.frame(["type": "speech", "speech_id": "s4"])
+        XCTAssertEqual(sends(a), [["type": "interrupted", "speech_id": "s4"]])
+        XCTAssertTrue(e.binary(Data([1])).isEmpty)
+        XCTAssertEqual(sends(e.frame(["type": "speech", "speech_id": "c-5"])), [["type": "interrupted", "speech_id": "c-5"]])
+        XCTAssertTrue(e.binary(Data([1])).isEmpty)
+        XCTAssertFalse(e.speaking)
+        _ = e.pressEnded()
+        // The dropped speech's late audio stays dropped; the next speech plays.
+        XCTAssertTrue(e.binary(Data([1])).isEmpty)
+        XCTAssertEqual(e.frame(["type": "speech", "speech_id": "c-6"]), [.resetDecoder])
+        guard case .play = e.binary(Data([1])).first else { return XCTFail() }
+    }
 }

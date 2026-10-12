@@ -3,28 +3,22 @@
 
 import Foundation
 
-/// 多多's working bubble (design §4.4), driven by display-socket frames.
+/// 多多's working bubble (design §4.4), driven by `/live` frames.
 ///
-/// - A turn starts when the app's own send is accepted (`expect`) or on `turn received` (a Passport
-///   note, typed text from another screen, ambient speech).
+/// - A turn starts on `turn received` (the channel delivered an input to the brain: this phone's
+///   message, a Passport note, typed text from another screen, ambient speech). Its
+///   `message_ids` are the messages the bubble works on.
 /// - `thinking` / `tool` frames update the phase. Tool frames become steps by the Feishu process
 ///   card's rules (`ToolLine`): per call the channel sends `label` = name (claude's early call
 ///   without input), `label` + `input_summary` (the full call), and `label` = `<name> ✓` (the
 ///   result). The first two fill one step; the result marks the oldest open step of that name
 ///   done. The channel drops `tool_use_id`, so parallel calls of one tool pair up in order.
 /// - `duoduo_said` deltas (not reactions) stream the answer text, folded by `speech_id`.
-/// - Pocket is one conversation: the first answer after the waiting notes were sent ends the
-///   bubble, whatever `utt_id` it carries. Live, that is any `answer_final` (it leaves a
-///   provisional answer until its log row arrives); in the room log, the first answer row after
-///   the earliest waiting note's typed row (`endIfAnswered`, `LogCorrelation`), since the live
-///   frame can be missed. The brain folds notes sent while it works into the running turn and
-///   answers under the first one's `utt_id`. If a note is still queued behind that answer, its
-///   own turn's first `thinking` frame brings the bubble back.
-/// - `idle` ends a turn that produced no answer (docs/ble-protocol.md §9): its own utterance, an unnamed one,
-///   or the turn the bubble has seen work. A bubble still at 「收到了」 is kept on another
-///   utterance's `idle`: that turn ended before ours started.
-/// - The brain runs one turn at a time and `thinking` / `tool` frames carry no `utt_id`, so the
-///   bubble shows whatever turn the brain is in.
+/// - Correlation is by `message_ids`. An `answer_final` or `turn idle` naming one of the bubble's
+///   messages, or any one when the bubble has none, ends it; an answer to other inputs leaves a
+///   provisional answer and the bubble goes on. A turn can cover several messages (the brain
+///   folds inputs sent while it works into its turn).
+/// - After a reconnect `ready.turn` restores the bubble (`restore`).
 public struct TurnState: Equatable, Sendable {
     public enum Phase: String, Equatable, Sendable {
         case received, thinking, tool, streaming
@@ -80,10 +74,8 @@ public struct TurnState: Equatable, Sendable {
     }
 
     public struct Working: Equatable, Sendable {
-        /// The latest note this bubble waits on.
-        public var uttID: String?
-        /// Every note this bubble waits on, oldest first; the first answer after them ends it.
-        public var notes: [String] = []
+        /// The messages this bubble works on, oldest first; empty for a turn of room speech.
+        public var messages: [String] = []
         public var phase: Phase
         public var steps: [Step] = []
         public var text = ""
@@ -95,66 +87,88 @@ public struct TurnState: Equatable, Sendable {
         public var foldedSteps: Int { max(0, steps.count - 1) }
     }
 
-    /// An answer shown before its log row arrives (`answer_final` precedes `imlog_append`).
+    /// An answer shown before its log row arrives (`answer_final` precedes the answer's row).
     public struct Provisional: Equatable, Sendable {
         public var text: String
-        public var uttID: String?
+        public var messageIDs: [String]
         public var trace: Trace
         public var at: Date
     }
 
     public private(set) var working: Working?
     public private(set) var provisional: [Provisional] = []
-    /// Tool steps of answered turns in this session, by `utt:<utt_id>` and by `text:<answer>`, for
-    /// the collapsed step line above the final answer. Not persisted: after a relaunch an answer
-    /// shows without its steps.
+    /// Tool steps of answered turns in this session, by `msg:<message_ids>` and by
+    /// `text:<answer>`, for the collapsed step line above the final answer. Not persisted: after a
+    /// relaunch an answer shows without its steps.
     public private(set) var answerTraces: [String: Trace] = [:]
 
     public init() {}
 
-    public mutating func expect(uttID: String?, now: Date = Date()) {
-        if let w = working, w.uttID == uttID, uttID != nil { return }
-        let notes = (working?.notes ?? []) + (uttID.map { [$0] } ?? [])
-        // Sent while the brain works: the running turn goes on (and may take this note in), so
-        // its steps and start stay; the bubble now waits for this note too.
-        if var w = working, w.phase != .received {
-            w.uttID = uttID
-            w.notes = notes
+    /// Shows the bubble for a message before its turn frames arrive (fixtures).
+    public mutating func expect(messageID: String, now: Date = Date()) {
+        if var w = working {
+            if !w.messages.contains(messageID) { w.messages.append(messageID) }
             working = w
             return
         }
-        working = Working(uttID: uttID, notes: notes, phase: .received, startedAt: now)
+        working = Working(messages: [messageID], phase: .received, startedAt: now)
     }
 
-    /// Whether `idle` of `utt` ends the bubble: its own utterance, an unnamed one, or the turn
-    /// the bubble has been showing (see the type comment).
-    private func idleEnds(_ w: Working, utt: String?) -> Bool {
-        w.uttID == nil || utt == nil || w.uttID == utt || w.phase != .received
+    /// Whether a frame naming `ids` is about the bubble's turn.
+    private static func names(_ w: Working, _ ids: [String]) -> Bool {
+        w.messages.isEmpty || ids.contains(where: w.messages.contains)
     }
 
-    /// Ends the wait without an answer (display socket lost and restored: a missed `idle` must
-    /// not leave the bubble spinning). A turn still running restores it: the channel repeats
-    /// `turn thinking` every 2 s while the brain works (`bridge.turn_thinking_interval_ms`).
+    /// Ends the wait without an answer.
     public mutating func reset() { working = nil }
+
+    /// `ready.turn` after a (re)connect: the open turn, or none. A bubble whose turn closed while
+    /// the socket was down goes; an open turn the app had not seen gets one.
+    @discardableResult
+    public mutating func restore(_ snapshot: LiveEvent.TurnSnapshot?, now: Date = Date()) -> Bool {
+        let before = working
+        guard let snapshot else {
+            working = nil
+            return before != nil
+        }
+        if var w = working {
+            for id in snapshot.messageIDs where !w.messages.contains(id) { w.messages.append(id) }
+            working = w
+        } else {
+            let phase: Phase = snapshot.phase == "tool" ? .tool : snapshot.phase == "received" ? .received : .thinking
+            working = Working(messages: snapshot.messageIDs, phase: phase, startedAt: nil)
+        }
+        return before != working
+    }
+
+    /// A message failed after it reached the brain (`brain_unreachable`): the bubble stops
+    /// waiting for it, and goes when it was its only message.
+    @discardableResult
+    public mutating func messageFailed(_ id: String) -> Bool {
+        guard var w = working, w.messages.contains(id) else { return false }
+        w.messages.removeAll { $0 == id }
+        working = w.messages.isEmpty ? nil : w
+        return true
+    }
 
     /// Feeds one frame. Returns true when anything visible changed.
     @discardableResult
     public mutating func handle(frame f: [String: Any], now: Date = Date()) -> Bool {
+        let ids = LiveEvent.messageIDs(f)
         switch f["type"] as? String {
         case "turn":
-            let utt = f["utt_id"] as? String
             switch f["phase"] as? String {
             case "received":
-                if var w = working, w.uttID == nil || w.uttID == utt {
-                    if w.uttID == nil, let utt { w.uttID = utt; w.notes.append(utt) }
+                if var w = working {
+                    for id in ids where !w.messages.contains(id) { w.messages.append(id) }
+                    let changed = w != working
                     working = w
-                    return false
+                    return changed
                 }
-                working = Working(uttID: utt, notes: (working?.notes ?? []) + (utt.map { [$0] } ?? []),
-                                  phase: .received, startedAt: now)
+                working = Working(messages: ids, phase: .received, startedAt: now)
                 return true
             case "thinking":
-                var w = working ?? Working(uttID: utt, notes: utt.map { [$0] } ?? [], phase: .thinking, startedAt: now)
+                var w = working ?? Working(messages: ids, phase: .thinking, startedAt: now)
                 if w.phase == .streaming { return false }
                 // Steps stay open until their result frame: a thinking frame between parallel
                 // calls and their results must not close them.
@@ -163,7 +177,7 @@ public struct TurnState: Equatable, Sendable {
                 working = w
                 return changed
             case "tool":
-                var w = working ?? Working(uttID: utt, notes: utt.map { [$0] } ?? [], phase: .tool, startedAt: now)
+                var w = working ?? Working(messages: ids, phase: .tool, startedAt: now)
                 let raw = (f["label"] as? String) ?? ""
                 let input = f["input_summary"] as? String
                 if input == nil, raw.hasSuffix(ToolLine.resultSuffix) {
@@ -195,7 +209,7 @@ public struct TurnState: Equatable, Sendable {
                 working = w
                 return changed
             case "idle":
-                guard let w = working, idleEnds(w, utt: utt) else { return false }
+                guard let w = working, Self.names(w, ids) else { return false }
                 working = nil
                 return true
             default:
@@ -205,8 +219,7 @@ public struct TurnState: Equatable, Sendable {
             if f["kind"] as? String == "reaction" { return false }
             let chunk = f["text"] as? String ?? ""
             let id = f["speech_id"] as? String
-            let utt = f["utt_id"] as? String
-            var w = working ?? Working(uttID: utt, notes: utt.map { [$0] } ?? [], phase: .streaming, startedAt: now)
+            var w = working ?? Working(phase: .streaming, startedAt: now)
             if w.speechID != nil, w.speechID == id {
                 w.text += chunk
             } else {
@@ -219,31 +232,37 @@ public struct TurnState: Equatable, Sendable {
             return true
         case "answer_final":
             let text = f["text"] as? String ?? ""
-            let utt = f["utt_id"] as? String
-            // Any answer after the waiting notes ends the bubble (see the type comment); its steps
-            // are this answer's. A bubble still at 「收到了」 has none.
+            // An answer naming the bubble's messages ends it; its steps are this answer's. A
+            // bubble still at 「收到了」 has none. An answer to other inputs leaves the bubble
+            // waiting, without the streamed text that was this answer's.
             var trace = Trace.empty
             if let w = working {
-                trace = Trace(steps: w.steps.map { s -> Step in var d = s; d.done = true; return d },
-                              elapsed: w.startedAt.map { now.timeIntervalSince($0) })
-                working = nil
+                if Self.names(w, ids) {
+                    trace = Trace(steps: w.steps.map { s -> Step in var d = s; d.done = true; return d },
+                                  elapsed: w.startedAt.map { now.timeIntervalSince($0) })
+                    working = nil
+                } else if w.speechID != nil, w.speechID == f["speech_id"] as? String {
+                    var k = w
+                    k.text = ""
+                    k.speechID = nil
+                    k.phase = .thinking
+                    working = k
+                }
             }
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return true }
-            provisional.append(Provisional(text: text, uttID: utt, trace: trace, at: now))
+            provisional.append(Provisional(text: text, messageIDs: ids, trace: trace, at: now))
             return true
         default:
             return false
         }
     }
 
-    /// Ends the working bubble when an answer after its notes is in the room log. The live
-    /// `answer_final` can be missed: it may arrive while the display socket is down, or before
-    /// the wait was registered, and the log is the only record then. `entries` must be whole
-    /// days, oldest first, so a typed row precedes the answers after it (`LogCorrelation`).
+    /// Ends the working bubble when an answer row naming its messages is in the room log. The
+    /// live `answer_final` can be missed: it may arrive while the socket is down.
     @discardableResult
     public mutating func endIfAnswered(in entries: [ImlogEntry]) -> Bool {
-        guard let notes = working?.notes,
-              LogCorrelation.firstAnswerIndex(after: Set(notes), in: entries) != nil else { return false }
+        guard let w = working, !w.messages.isEmpty,
+              entries.contains(where: { $0.isAnswer && Self.names(w, $0.message_ids ?? []) }) else { return false }
         working = nil
         return true
     }
@@ -252,24 +271,26 @@ public struct TurnState: Equatable, Sendable {
     @discardableResult
     public mutating func settle(with entries: [ImlogEntry]) -> Bool {
         guard !provisional.isEmpty else { return false }
-        let answers = Set(entries.filter(\.isAnswer).map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) })
+        let answers = Set(entries.filter(\.isAnswer).map { $0.shownText.trimmingCharacters(in: .whitespacesAndNewlines) })
         let before = provisional.count
         provisional.removeAll { p in
             let key = p.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard answers.contains(key) else { return false }
             if !p.trace.steps.isEmpty {
                 answerTraces["text:" + key] = p.trace
-                if let u = p.uttID { answerTraces["utt:" + u] = p.trace }
+                if !p.messageIDs.isEmpty { answerTraces[Self.traceKey(p.messageIDs)] = p.trace }
             }
             return true
         }
         return provisional.count != before
     }
 
+    static func traceKey(_ ids: [String]) -> String { "msg:" + ids.sorted().joined(separator: ",") }
+
     /// Steps of an answered turn, for the collapsed line above the final answer: by the row's
-    /// `utt_id` when it has one, else by the answer text.
-    public func trace(forAnswer text: String, uttID: String? = nil) -> Trace {
-        if let u = uttID, let t = answerTraces["utt:" + u] { return t }
+    /// `message_ids` when it has them, else by the answer text.
+    public func trace(forAnswer text: String, messageIDs: [String]? = nil) -> Trace {
+        if let ids = messageIDs, !ids.isEmpty, let t = answerTraces[Self.traceKey(ids)] { return t }
         let key = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return answerTraces["text:" + key] ?? provisional.first { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) == key }?.trace ?? .empty
     }

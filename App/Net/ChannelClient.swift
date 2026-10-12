@@ -73,12 +73,22 @@ struct ChannelClient: Sendable {
         return ImlogEntry.decodeList(o?["entries"])
     }
 
-    func inject(text: String, attachments: [ChannelAttachment]) async throws -> InjectReceipt {
-        let (s, b) = try await call("POST", ChannelPaths.inject(room: settings.room),
-                                    headers: ["Content-Type": "application/json"],
-                                    body: ChannelPaths.injectBody(text: text, attachments: attachments))
-        guard s == 200 else { throw ChannelError.http(s, Self.errorText(b)) }
-        return InjectReceipt.decode(b)
+    /// `POST /api/messages` with typed text. `key` is the message id; a resend with the same key
+    /// gets the first receipt, so a text whose response was lost is not taken twice.
+    func sendMessage(text: String, attachments: [ChannelAttachment], key: String) async throws -> MessageReceipt {
+        let (s, b) = try await call("POST", ChannelPaths.messages(room: settings.room),
+                                    headers: ChannelPaths.typedMessageHeaders(key: key),
+                                    body: ChannelPaths.typedMessageBody(text: text, attachments: attachments))
+        guard s == 202 else { throw ChannelError.http(s, Self.errorText(b)) }
+        return MessageReceipt.decode(b) ?? MessageReceipt(messageID: key, at: nil)
+    }
+
+    /// `GET /api/imlog?since=`: the rows after the cursor, without a socket (Background App
+    /// Refresh, a BLE wake).
+    func rows(since: Int) async throws -> RowsSince {
+        let (s, b) = try await call("GET", ChannelPaths.imlog(room: settings.room, since: since))
+        guard s == 200, let r = RowsSince.decode(b) else { throw ChannelError.http(s, Self.errorText(b)) }
+        return r
     }
 
     /// `POST /api/upload`. The per-attempt timeout is the upload deadline: a photo over a slow

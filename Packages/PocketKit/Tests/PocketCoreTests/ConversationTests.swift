@@ -39,6 +39,15 @@ final class HistoryCacheTests: XCTestCase {
         XCTAssertNotEqual(ImlogEntry(at: "x", kind: "human", text: "t").key, ImlogEntry(at: "y", kind: "human", text: "t").key)
     }
 
+    /// Rows with a cursor are keyed by it: two rows with the same text are two rows.
+    func testRowsWithSeqAreKeyedBySeq() {
+        let a = ImlogEntry(seq: 1_900_000_000_000, at: "x", kind: "human", text: "t")
+        var b = a
+        b.seq = 1_900_000_000_001
+        XCTAssertEqual(a.key, "seq:1900000000000")
+        XCTAssertNotEqual(a.key, b.key)
+    }
+
     func testInvalidDayIsIgnored() {
         let c = HistoryCache(directory: tempDir())
         c.replace(day: "../evil", entries: [])
@@ -65,13 +74,36 @@ final class OutboxTests: XCTestCase {
         XCTAssertEqual(o.sendable().map(\.id), [t.id, v.id])
         o.set(t.id, .sending)
         XCTAssertEqual(o.sendable().map(\.id), [v.id])
-        o.set(t.id, .delivered(uttID: "u1", at: nil, transcript: nil, recordAvailable: true))
+        o.set(t.id, .accepted(at: nil, cleaned: nil))
         o.set(v.id, .failed(reason: "识别出错 · 轻点重试"))
         XCTAssertTrue(o.sendable().isEmpty)
-        // The log row with u1 arrives: the delivered item leaves, the failed one stays.
-        let removed = o.reconcile(with: [ImlogEntry(at: "a", kind: "typed", text: "x", utt_id: "u1")])
+        // The row whose utt_id is the message id arrives: the item leaves, the failed one stays.
+        let removed = o.reconcile(with: [ImlogEntry(at: "a", kind: "typed", text: "x", utt_id: t.messageID)])
         XCTAssertEqual(removed, [t.id])
         XCTAssertEqual(o.items.map(\.id), [v.id])
+    }
+
+    /// The message id is fixed at creation: the voice note's id or the item's, lowercased.
+    func testMessageIDIsTheIdempotencyKey() {
+        let vid = UUID()
+        XCTAssertEqual(OutboxItem(body: .voice(voiceID: vid, durationMs: 1)).messageID, vid.uuidString.lowercased())
+        let t = OutboxItem(body: .text("a", attachments: []))
+        XCTAssertEqual(t.messageID, t.id.uuidString.lowercased())
+        var o = Outbox()
+        o.add(t)
+        XCTAssertEqual(o.item(messageID: t.messageID)?.id, t.id)
+    }
+
+    /// An outbox this build cannot read is dropped with its voice packets.
+    func testUnreadableOutboxIsDroppedWithItsPackets() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"{"items":[{"state":{"delivered":{}}}]}"#.utf8).write(to: dir.appendingPathComponent("outbox.json"))
+        try Data([1]).write(to: dir.appendingPathComponent("voice-x.bin"))
+        let s = OutboxStore(directory: dir)
+        XCTAssertTrue(s.outbox.items.isEmpty)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path), [])
     }
 
     func testSendingItemIsRequeuedAfterRelaunch() throws {
@@ -84,6 +116,8 @@ final class OutboxTests: XCTestCase {
         s.mutate { $0.add(item) }
         let again = OutboxStore(directory: dir)
         XCTAssertEqual(again.outbox.items.first?.state, .queued)
+        // Requeued with the same key.
+        XCTAssertEqual(again.outbox.items.first?.messageID, note.id.uuidString.lowercased())
         XCTAssertEqual(again.loadVoice(note.id)?.packets, note.packets)
         // Removing the item removes its packets.
         again.mutate { $0.remove(item.id) }
@@ -94,9 +128,10 @@ final class OutboxTests: XCTestCase {
 final class TurnStateTests: XCTestCase {
     func testWorkingBubbleLifecycle() {
         var t = TurnState()
-        t.expect(uttID: "u1")
+        t.handle(frame: ["type": "turn", "phase": "received", "message_ids": ["m1"]])
         XCTAssertEqual(t.working?.phase, .received)
-        t.handle(frame: ["type": "turn", "utt_id": NSNull(), "phase": "thinking"])
+        XCTAssertEqual(t.working?.messages, ["m1"])
+        t.handle(frame: ["type": "turn", "phase": "thinking", "message_ids": ["m1"]])
         XCTAssertEqual(t.working?.phase, .thinking)
         // Per call: early frame without input, the full call, the result.
         t.handle(frame: ["type": "turn", "phase": "tool", "label": "calendar"])
@@ -107,12 +142,12 @@ final class TurnStateTests: XCTestCase {
                                           .init(name: "reminder", summary: "提醒", done: false, hasInput: true)])
         XCTAssertEqual(t.working?.toolLabel, "reminder 提醒")
         XCTAssertEqual(t.working?.foldedSteps, 1)
-        t.handle(frame: ["type": "duoduo_said", "speech_id": "c-u1", "text": "好，"])
-        t.handle(frame: ["type": "duoduo_said", "speech_id": "c-u1", "text": "明天"])
+        t.handle(frame: ["type": "duoduo_said", "speech_id": "c-m1", "text": "好，"])
+        t.handle(frame: ["type": "duoduo_said", "speech_id": "c-m1", "text": "明天"])
         t.handle(frame: ["type": "duoduo_said", "speech_id": "s1", "kind": "reaction", "text": "我看看"])
         XCTAssertEqual(t.working?.text, "好，明天")
         XCTAssertEqual(t.working?.phase, .streaming)
-        t.handle(frame: ["type": "answer_final", "utt_id": "u1", "speech_id": "c-u1", "text": "好，明天三点。"])
+        t.handle(frame: ["type": "answer_final", "message_ids": ["m1"], "speech_id": "c-m1", "text": "好，明天三点。"])
         XCTAssertNil(t.working)
         XCTAssertEqual(t.provisional.map(\.text), ["好，明天三点。"])
         // The log row settles the provisional answer and keeps its steps.
@@ -124,48 +159,80 @@ final class TurnStateTests: XCTestCase {
 
     func testIdleEndsATurnWithoutAnswer() {
         var t = TurnState()
-        t.expect(uttID: "u1")
-        // Idle for another utterance does not end ours.
-        XCTAssertFalse(t.handle(frame: ["type": "turn", "utt_id": "u9", "phase": "idle"]))
+        t.expect(messageID: "m1")
+        // Idle of another message's turn does not end ours.
+        XCTAssertFalse(t.handle(frame: ["type": "turn", "message_ids": ["m9"], "phase": "idle"]))
+        XCTAssertFalse(t.handle(frame: ["type": "turn", "message_ids": [], "phase": "idle"]))
         XCTAssertNotNil(t.working)
-        XCTAssertTrue(t.handle(frame: ["type": "turn", "utt_id": "u1", "phase": "idle"]))
+        XCTAssertTrue(t.handle(frame: ["type": "turn", "message_ids": ["m1"], "phase": "idle"]))
         XCTAssertNil(t.working)
         XCTAssertTrue(t.provisional.isEmpty)
+        // A room-speech turn (no messages) ends on any idle.
+        t.handle(frame: ["type": "turn", "phase": "received", "message_ids": []])
+        XCTAssertTrue(t.handle(frame: ["type": "turn", "message_ids": [], "phase": "idle"]))
     }
 
-    /// The answer reached the log while the display socket was down, so no `answer_final` frame
-    /// came; the 「收到了」 bubble must not stay under the answer.
+    /// An answer to other inputs does not end the bubble; it stays a provisional answer.
+    func testAnswerToOtherInputsKeepsTheBubble() {
+        var t = TurnState()
+        t.expect(messageID: "m2")
+        t.handle(frame: ["type": "duoduo_said", "speech_id": "c-x", "text": "房间"])
+        t.handle(frame: ["type": "answer_final", "message_ids": [], "speech_id": "c-x", "text": "房间里的回答"])
+        XCTAssertEqual(t.working?.messages, ["m2"])
+        XCTAssertEqual(t.working?.text, "")
+        XCTAssertEqual(t.provisional.map(\.text), ["房间里的回答"])
+    }
+
+    /// The answer reached the log while the socket was down, so no `answer_final` frame came;
+    /// the 「收到了」 bubble must not stay under the answer.
     func testWorkingEndsWhenItsAnswerIsInTheLog() {
         let log = [
-            ImlogEntry(at: "2030-01-01T09:00:00.000Z", kind: "typed", text: "明天有什么安排", utt_id: "inj-8",
+            ImlogEntry(at: "2030-01-01T09:00:00.000Z", kind: "typed", text: "明天有什么安排", utt_id: "m8",
                        voice_source: "passport"),
-            ImlogEntry(at: "2030-01-01T09:00:20.000Z", speaker: "多多", kind: "answer", text: "明天上午有两个会"),
-            ImlogEntry(at: "2030-01-01T09:02:30.000Z", kind: "typed", text: "出门要带什么？", utt_id: "inj-9",
+            ImlogEntry(at: "2030-01-01T09:00:20.000Z", speaker: "多多", kind: "answer", text: "明天上午有两个会",
+                       message_ids: ["m8"]),
+            ImlogEntry(at: "2030-01-01T09:02:30.000Z", kind: "typed", text: "出门要带什么？", utt_id: "m9",
                        voice_source: "passport"),
         ]
         var t = TurnState()
-        t.expect(uttID: "inj-9")
+        t.expect(messageID: "m9")
         // The earlier answer is not this turn's.
         XCTAssertFalse(t.endIfAnswered(in: log))
         XCTAssertEqual(t.working?.phase, .received)
         let answered = log + [ImlogEntry(at: "2030-01-01T09:02:33.000Z", speaker: "多多", kind: "answer",
-                                         text: "记得带伞和充电器")]
+                                         text: "记得带伞和充电器", message_ids: ["m9"])]
         XCTAssertTrue(t.endIfAnswered(in: answered))
         XCTAssertNil(t.working)
-        // Registered after the answer was logged: ends at once.
-        t.expect(uttID: "inj-9")
-        XCTAssertTrue(t.endIfAnswered(in: answered))
-        XCTAssertNil(t.working)
-        // A turn without utt_id is not ended by the log.
-        t.expect(uttID: nil)
-        XCTAssertFalse(t.endIfAnswered(in: answered))
-        XCTAssertNotNil(t.working)
     }
 
     func testReceivedFromAnotherSourceStartsWorking() {
         var t = TurnState()
-        t.handle(frame: ["type": "turn", "utt_id": "inj-1", "phase": "received", "text": "x"])
-        XCTAssertEqual(t.working?.uttID, "inj-1")
+        t.handle(frame: ["type": "turn", "message_ids": ["m1"], "phase": "received", "text": "x"])
+        XCTAssertEqual(t.working?.messages, ["m1"])
+        // A message folded into the running turn joins it.
+        t.handle(frame: ["type": "turn", "message_ids": ["m2"], "phase": "received"])
+        XCTAssertEqual(t.working?.messages, ["m1", "m2"])
+    }
+
+    /// `ready.turn`: none ends a bubble whose turn closed while the socket was down; an open one
+    /// restores it.
+    func testRestoreFromReady() {
+        var t = TurnState()
+        t.expect(messageID: "m1")
+        XCTAssertTrue(t.restore(nil))
+        XCTAssertNil(t.working)
+        XCTAssertTrue(t.restore(.init(messageIDs: ["m2"], phase: "tool")))
+        XCTAssertEqual(t.working?.messages, ["m2"])
+        XCTAssertEqual(t.working?.phase, .tool)
+    }
+
+    func testBrainUnreachableDropsTheMessage() {
+        var t = TurnState()
+        t.handle(frame: ["type": "turn", "message_ids": ["m1", "m2"], "phase": "received"])
+        XCTAssertTrue(t.messageFailed("m1"))
+        XCTAssertEqual(t.working?.messages, ["m2"])
+        XCTAssertTrue(t.messageFailed("m2"))
+        XCTAssertNil(t.working)
     }
 }
 
@@ -179,7 +246,8 @@ final class ThreadBuilderTests: XCTestCase {
             ImlogEntry(at: "2026-10-06T14:40:05.000Z", speaker: "多多", kind: "answer", text: "好", unspoken: true),
             ImlogEntry(at: "2026-10-07T00:12:00.000Z", kind: "typed", text: "带伞吗", utt_id: "u1", voice_source: "passport"),
             ImlogEntry(at: "2026-10-07T00:12:03.000Z", speaker: "多多", kind: "reaction", text: "我看看"),
-            ImlogEntry(at: "2026-10-07T00:12:09.000Z", speaker: "多多", kind: "answer", text: "要带", truncated: true),
+            ImlogEntry(at: "2026-10-07T00:12:09.000Z", speaker: "多多", kind: "answer", text: "要带", truncated: true,
+                       full_text: "要带，下午有雨"),
         ]
         let rows = ThreadBuilder(now: now, timeZone: tz).build(.init(entries: entries, durations: ["u1": 6000]))
         let labels = rows.compactMap { if case .separator(_, let l) = $0 { l } else { nil } }
@@ -195,6 +263,8 @@ final class ThreadBuilderTests: XCTestCase {
         guard case .duoduo(let unspoken) = rows[2], case .duoduo(let cut) = rows[5] else { return XCTFail() }
         XCTAssertNil(unspoken.spoken)
         XCTAssertEqual(cut.spoken, "只播了一部分")
+        // A truncated answer shows the whole text.
+        XCTAssertEqual(cut.text, "要带，下午有雨")
     }
 
     func testHeardRunsFold() {
@@ -209,19 +279,18 @@ final class ThreadBuilderTests: XCTestCase {
     }
 
     func testPendingRowsHideOnceLoggedAndWorkingComesLast() {
-        let logged = OutboxItem(body: .text("a", attachments: []),
-                                state: .delivered(uttID: "u1", at: nil, transcript: nil, recordAvailable: true))
+        let logged = OutboxItem(body: .text("a", attachments: []), state: .accepted(at: nil, cleaned: nil))
         let queued = OutboxItem(body: .text("b", attachments: []))
         var turn = TurnState()
-        turn.expect(uttID: "u2")
+        turn.expect(messageID: "u2")
         let rows = ThreadBuilder(now: now, timeZone: tz).build(.init(
-            entries: [ImlogEntry(at: "2026-10-07T03:00:00.000Z", kind: "typed", text: "a", utt_id: "u1")],
-            outbox: [logged, queued], turn: turn, recordLost: ["u1"]))
+            entries: [ImlogEntry(at: "2026-10-07T03:00:00.000Z", kind: "typed", text: "a", utt_id: logged.messageID)],
+            outbox: [logged, queued], turn: turn, undelivered: [logged.messageID]))
         let pendingIDs = rows.compactMap { if case .pending(let p) = $0 { p.id } else { nil } }
         XCTAssertEqual(pendingIDs, [queued.id])
         guard case .working = rows.last else { return XCTFail() }
         guard case .mine(let m) = rows[1] else { return XCTFail() }
-        XCTAssertEqual(m.delivery, "已送达，记录未保存")
+        XCTAssertEqual(m.delivery, "没送到多多")
     }
 }
 
@@ -231,12 +300,14 @@ final class DuoduoAttachmentTests: XCTestCase {
     /// The row the channel writes for files 多多 sent (`showBrainAttachments`), as `/live` and
     /// `/api/imlog` carry it.
     private let fileRowJSON = #"""
-    {"type":"imlog_append","entries":[{"at":"2026-10-07T12:00:01.000Z","speaker":"多多","kind":"answer","text":"","attachments":[{"name":"示例图.png","mime":"image/png","sha256":"0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"},{"name":"report.pdf","mime":"application/pdf"}]}]}
+    {"type":"row","seq":1791000001000,"row":{"seq":1791000001000,"at":"2026-10-07T12:00:01.000Z","speaker":"多多","kind":"answer","text":"","attachments":[{"name":"示例图.png","mime":"image/png","sha256":"0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"},{"name":"report.pdf","mime":"application/pdf"}]}}
     """#
 
     private func entries() throws -> [ImlogEntry] {
         let frame = try JSONSerialization.jsonObject(with: Data(fileRowJSON.utf8)) as! [String: Any]
-        return ImlogEntry.decodeList(frame["entries"])
+        guard case .row(let seq, let e) = LiveEvent.decode(frame) else { return [] }
+        XCTAssertEqual(seq, 1_791_000_001_000)
+        return [e]
     }
 
     func testFileRowDecodesWithAttachments() throws {
@@ -276,13 +347,12 @@ final class DuoduoAttachmentTests: XCTestCase {
 
 final class ChannelAPITests: XCTestCase {
     func testStateDecodesLimitsAndFallsBack() {
-        let withLimit = Data(#"{"room":"study","room_name":"书房","date":"2026-10-07","daemon_ok":true,"cerebellum_ok":false,"capture":{"owner":null},"controls":{"mute":{"active":true}},"imlog":[{"at":"a","speaker":null,"kind":"typed","text":"hi","utt_id":"u1"}],"limits":{"upload_max_bytes":10485760}}"#.utf8)
+        let withLimit = Data(#"{"room":"study","room_name":"书房","date":"2026-10-07","daemon_ok":true,"cerebellum_ok":false,"capture":{"owner":null},"controls":{"mute":{"active":true}},"limits":{"upload_max_bytes":10485760}}"#.utf8)
         let s = RoomState.decode(withLimit)!
         XCTAssertEqual(s.uploadMaxBytes, 10_485_760)
         XCTAssertEqual(s.roomName, "书房")
         XCTAssertEqual(s.cerebellumOK, false)
         XCTAssertTrue(s.muted)
-        XCTAssertEqual(s.imlog.first?.utt_id, "u1")
         XCTAssertEqual(UploadPolicy.check(size: 11_000_000, state: s), .tooLarge(limit: 10_485_760))
         XCTAssertEqual(UploadPolicy.check(size: 100, state: s), .ok)
 
@@ -298,12 +368,12 @@ final class ChannelAPITests: XCTestCase {
         XCTAssertEqual(UploadPolicy.check(size: 1, state: off), .disabled)
     }
 
-    func testUploadOutcomeAndInjectBody() throws {
+    func testUploadOutcomeAndTypedMessageBody() throws {
         let ok = UploadPolicy.outcome(status: 200, body: Data(#"{"name":"a.jpg","mime":"image/jpeg","path":"/inbox/a.jpg","sha256":"ab"}"#.utf8),
                                       name: "a.jpg", mime: "image/jpeg", state: nil)
         guard case .uploaded(let a) = ok else { return XCTFail("\(ok)") }
         XCTAssertEqual(a.path, "/inbox/a.jpg")
-        let body = ChannelPaths.injectBody(text: "看看", attachments: [a])
+        let body = ChannelPaths.typedMessageBody(text: "看看", attachments: [a])
         let obj = try JSONSerialization.jsonObject(with: body) as! [String: Any]
         XCTAssertEqual((obj["attachments"] as! [[String: Any]]).first?["path"] as? String, "/inbox/a.jpg")
         XCTAssertEqual(UploadPolicy.outcome(status: 503, body: Data(#"{"error":"bridge.upload_max_bytes must be a positive integer"}"#.utf8),
@@ -314,7 +384,105 @@ final class ChannelAPITests: XCTestCase {
 
     func testPathsEscapeRoom() {
         XCTAssertEqual(ChannelPaths.state(room: "a&b"), "/api/state?room=a%26b")
+        XCTAssertEqual(ChannelPaths.messages(room: "a&b"), "/api/messages?room=a%26b")
+        XCTAssertEqual(ChannelPaths.live(room: "a&b"), "/live?room=a%26b")
+        XCTAssertEqual(ChannelPaths.live(room: "r", since: 1_791_000_000_000), "/live?room=r&since=1791000000000")
+        XCTAssertEqual(ChannelPaths.imlog(room: "r", since: 5), "/api/imlog?room=r&since=5")
+        XCTAssertEqual(ChannelPaths.typedMessageHeaders(key: "k"), ["Content-Type": "application/json", "Idempotency-Key": "k"])
         XCTAssertEqual(ChannelPaths.attachment(room: "r", ChannelAttachment(name: "报价 v2.pdf", mime: "application/pdf", sha256: "ff")),
                        "/api/attachment?room=r&sha256=ff&mime=application/pdf&name=%E6%8A%A5%E4%BB%B7%20v2.pdf")
+    }
+}
+
+final class LiveEventTests: XCTestCase {
+    private func decode(_ json: String) -> LiveEvent? {
+        LiveEvent.decode(try! JSONSerialization.jsonObject(with: Data(json.utf8)) as! [String: Any])
+    }
+
+    func testReadyRowAndMessageEvents() {
+        XCTAssertEqual(decode(#"{"type":"ready","seq":1791000000000,"turn":{"message_ids":["m1"],"phase":"thinking"},"messages":[{"id":"m2","state":"cleaned"},{"id":"m3","state":"accepted"}]}"#),
+                       .ready(.init(seq: 1_791_000_000_000, turn: .init(messageIDs: ["m1"], phase: "thinking"),
+                                    messages: ["m2": "cleaned", "m3": "accepted"])))
+        XCTAssertEqual(decode(#"{"type":"ready","seq":7,"turn":null,"messages":[]}"#), .ready(.init(seq: 7)))
+        guard case .row(5, let e) = decode(#"{"type":"row","seq":5,"row":{"seq":5,"at":"a","speaker":"多多","kind":"answer","text":"x","message_ids":["m1"],"truncated":true,"full_text":"xyz"}}"#)
+        else { return XCTFail() }
+        XCTAssertEqual(e.message_ids, ["m1"])
+        XCTAssertEqual(e.shownText, "xyz")
+        XCTAssertEqual(decode(#"{"type":"message","id":"m1","state":"cleaned","text":"你好"}"#), .cleaned(id: "m1", text: "你好"))
+        XCTAssertEqual(decode(#"{"type":"message","id":"m1","state":"failed","reason":"asr_failed"}"#),
+                       .failed(id: "m1", reason: .asrFailed))
+        XCTAssertNil(decode(#"{"type":"turn","phase":"idle","message_ids":[]}"#))
+    }
+
+    func testCursorAdmitsOnlyNewerRows() {
+        var c = RowCursor()
+        XCTAssertTrue(c.admit(10))
+        XCTAssertFalse(c.admit(10))
+        XCTAssertFalse(c.admit(9))
+        c.reached(20)
+        XCTAssertEqual(c.seq, 20)
+        c.reached(15)
+        XCTAssertEqual(c.seq, 20)
+        XCTAssertTrue(c.admit(21))
+    }
+
+    func testSettlementAtReady() {
+        let r = LiveEvent.Ready(seq: 1, messages: ["m1": "cleaned"])
+        XCTAssertEqual(MessageSettlement.of("m1", ready: r, rowLogged: false), .open(state: "cleaned"))
+        XCTAssertEqual(MessageSettlement.of("m2", ready: r, rowLogged: true), .logged)
+        XCTAssertEqual(MessageSettlement.of("m3", ready: r, rowLogged: false), .failed)
+    }
+}
+
+final class VoiceResultWaitTests: XCTestCase {
+    func testCleanedIsResultZeroWithTheCleanedText() {
+        var w = VoiceResultWait(messageID: "m1")
+        XCTAssertNil(w.handle(.cleaned(id: "other", text: "x")))
+        XCTAssertNil(w.handle(.row(seq: 1, ImlogEntry(at: "a", kind: "typed", text: "清洗后的", utt_id: "m1"))))
+        XCTAssertEqual(w.handle(.cleaned(id: "m1", text: "清洗后的")), .init(code: .transcribed, text: "清洗后的"))
+        // Once.
+        XCTAssertNil(w.handle(.failed(id: "m1", reason: .brainUnreachable)))
+        XCTAssertNil(w.expired(connected: true))
+    }
+
+    func testFailuresMapToResultCodes() {
+        let cases: [(MessageFailure, ResultCode)] = [(.emptyTranscript, .empty), (.asrFailed, .asrFailed),
+                                                     (.perceptionUnavailable, .sendFailed), (.other("x"), .sendFailed)]
+        for (reason, code) in cases {
+            var w = VoiceResultWait(messageID: "m1")
+            XCTAssertEqual(w.handle(.failed(id: "m1", reason: reason))?.code, code, "\(reason)")
+        }
+    }
+
+    /// Reconnected before RESULT: `ready.messages` and the replayed row decide.
+    func testReconnectSettlement() {
+        var open = VoiceResultWait(messageID: "m1")
+        XCTAssertNil(open.handle(.ready(.init(seq: 1, messages: ["m1": "accepted"]))))
+        XCTAssertEqual(open.handle(.cleaned(id: "m1", text: "后来")), .init(code: .transcribed, text: "后来"))
+
+        var logged = VoiceResultWait(messageID: "m1")
+        _ = logged.handle(.row(seq: 2, ImlogEntry(at: "a", kind: "typed", text: "行里的", utt_id: "m1")))
+        XCTAssertEqual(logged.handle(.ready(.init(seq: 2))), .init(code: .transcribed, text: "行里的"))
+
+        var lost = VoiceResultWait(messageID: "m1")
+        XCTAssertEqual(lost.handle(.ready(.init(seq: 2))), .init(code: .sendFailed, text: ""))
+    }
+
+    /// The row was replayed before the retry's 202 (the first attempt's receipt was lost): the
+    /// 202 settles RESULT 0 with the row's text.
+    func testAcceptedAfterTheRowIsResultZero() {
+        var w = VoiceResultWait(messageID: "m1")
+        XCTAssertNil(w.accepted())
+        var r = VoiceResultWait(messageID: "m1")
+        _ = r.handle(.row(seq: 2, ImlogEntry(at: "a", kind: "typed", text: "行里的", utt_id: "m1")))
+        XCTAssertEqual(r.accepted(), .init(code: .transcribed, text: "行里的"))
+        XCTAssertNil(r.accepted())
+    }
+
+    func testDeadlineIsSendFailedOrNotConnected() {
+        var a = VoiceResultWait(messageID: "m1")
+        XCTAssertEqual(a.expired(connected: true)?.code, .sendFailed)
+        var b = VoiceResultWait(messageID: "m1")
+        XCTAssertEqual(b.expired(connected: false)?.code, .notConnectedToServer)
     }
 }

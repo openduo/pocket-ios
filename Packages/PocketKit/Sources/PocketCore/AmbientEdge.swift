@@ -28,6 +28,11 @@ import Foundation
 ///    plays out. A local 别说了 stops everything and sends `hush`.
 /// 4. Generations: `speech` and `stop_audio` start a new generation; completion callbacks of an
 ///    older generation are ignored, so one speech's tail is never credited to the next.
+/// 5. A press stops local playback at once (fillers too) and reports the speech that was playing
+///    with `interrupted{speech_id}`; whether earlier answers are superseded is decided when the
+///    press's message arrives. While a press is held nothing plays: each `speech` that arrives is
+///    dropped, its audio discarded, and reported with the same frame, because the channel waits
+///    for playback reports. The press is app-local; no frame announces it.
 public struct AmbientEdge: Equatable {
     /// Cadence of intermediate `played` reports, the web edge's `PLAYED_REPORT_MS`.
     public static let playedReportMs = 250.0
@@ -69,6 +74,8 @@ public struct AmbientEdge: Equatable {
     public private(set) var gen = 0
     public private(set) var pending = 0
     public private(set) var speaking = false
+    /// A speech dropped during a press: its binary frames are discarded without a warning.
+    public private(set) var dropped: String?
     private var clockID: String?
     private var playedMs = 0.0
     private var lastReported = -1.0
@@ -141,8 +148,14 @@ public struct AmbientEdge: Equatable {
     public mutating func pressBegan() -> [Action] {
         let before = muted
         pressCount += 1
-        return before != muted && helloSent ? [micFrame()] : []
+        var out: [Action] = before != muted && helloSent ? [micFrame()] : []
+        if let id = current {
+            out += stopSpeech(nil) + [interrupted(id)]
+        }
+        return out
     }
+
+    private func interrupted(_ id: String) -> Action { .send(["type": "interrupted", "speech_id": id]) }
 
     public mutating func pressEnded() -> [Action] {
         guard pressCount > 0 else { return [] }
@@ -182,6 +195,12 @@ public struct AmbientEdge: Equatable {
             return []
         case "speech":
             guard let id = f["speech_id"] as? String else { return [] }
+            if pressCount > 0 {
+                // Nothing plays while a press is held.
+                dropped = id
+                return stopSpeech(nil) + [interrupted(id)]
+            }
+            dropped = nil
             gen += 1
             pending = 0
             current = id
@@ -199,7 +218,9 @@ public struct AmbientEdge: Equatable {
 
     /// One binary frame (one Opus packet).
     public mutating func binary(_ packet: Data) -> [Action] {
-        guard current != nil else { return [.warn("binary frame before any speech declaration (dropped)")] }
+        guard current != nil else {
+            return dropped != nil ? [] : [.warn("binary frame before any speech declaration (dropped)")]
+        }
         return [.play(packet, gen: gen)]
     }
 

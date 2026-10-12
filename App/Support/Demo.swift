@@ -175,16 +175,17 @@ enum Demo {
             m.device.deviceName = nil
         case "chat-working", "passport-sheet", "settings":
             entries.append(passportAsk)
-            turn.expect(uttID: "d3")
+            turn.expect(messageID: "d3")
             feedTools(&turn, Self.toolRun, finishLast: false)
         case "chat-done", "chat-done-tap":
             entries.append(passportAsk)
             let start = Date().addingTimeInterval(-40)
-            turn.expect(uttID: "d3", now: start)
+            turn.expect(messageID: "d3", now: start)
             feedTools(&turn, Self.toolRun, finishLast: true)
             let answer = L("好，明天 15:00 提醒你给妈妈打电话。那个时间你没有别的安排，日历上 14:00–17:00 是空的。", "OK, I'll remind you to call Mom at 15:00 tomorrow. You're free: your calendar is clear from 14:00 to 17:00.")
-            turn.handle(frame: ["type": "answer_final", "utt_id": "d3", "text": answer], now: start.addingTimeInterval(23))
-            let row = ImlogEntry(at: at(0, 9, 39), speaker: "多多", kind: "answer", text: answer, unspoken: true)
+            turn.handle(frame: ["type": "answer_final", "message_ids": ["d3"], "text": answer], now: start.addingTimeInterval(23))
+            let row = ImlogEntry(at: at(0, 9, 39), speaker: "多多", kind: "answer", text: answer, unspoken: true,
+                                 message_ids: ["d3"])
             turn.settle(with: [row])
             entries.append(row)
         case "chat-markdown":
@@ -235,7 +236,7 @@ enum Demo {
             outbox = [OutboxItem(body: .voice(voiceID: UUID(), durationMs: 4000), state: .failed(reason: String(localized: "没发出去 · 轻点重试")))]
             notes = [(ThreadBuilder.parse(at(0, 10, 2))!, String(localized: "没听清，再说一次"))]
             outbox.append(OutboxItem(body: .voice(voiceID: UUID(), durationMs: 5000), state: .sending))
-            turn.expect(uttID: "d5")
+            turn.expect(messageID: "d5")
             turn.handle(frame: ["type": "duoduo_said", "speech_id": "c-d5", "text": L("我查了一下，周五 19:00 和 20:30 还有四人位。要我帮你订下来，晚点提醒你打电话吗", "I checked: tables for four are free at 19:00 and 20:30 on Friday. Want me to remind you to call and book")])
         case "composer-voice", "composer-text":
             entries.append(passportAsk)
@@ -336,7 +337,7 @@ enum Demo {
         let medium = (0..<3).map { L("第 \($0 + 1) 段。", "Part \($0 + 1). ") + paragraph }.joined(separator: "\n\n")
         let long = (0..<9).map { L("第 \($0 + 1) 段。", "Part \($0 + 1). ") + paragraph }.joined(separator: "\n\n")
         var turn = TurnState()
-        turn.expect(uttID: "L0")
+        turn.expect(messageID: "L0")
         feedTools(&turn, Self.toolRun, finishLast: false)
         var chat = chat
         func show() {
@@ -353,36 +354,36 @@ enum Demo {
         func now() -> String { iso.string(from: Date()) }
         later(1) {
             turn.handle(frame: ["type": "turn", "phase": "tool", "label": "Notify ✓"])
-            turn.handle(frame: ["type": "answer_final", "utt_id": "L0", "text": medium, "speech_id": "ch:L0"])
-            turn.handle(frame: ["type": "turn", "utt_id": "L0", "phase": "idle"])
+            turn.handle(frame: ["type": "answer_final", "message_ids": ["L0"], "text": medium, "speech_id": "ch:L0"])
+            turn.handle(frame: ["type": "turn", "message_ids": ["L0"], "phase": "idle"])
             show()
         }
         later(2) {
             entries.append(ImlogEntry(at: now(), kind: "typed", text: L("周三换成排骨吧，鱼放到周末", "Make Wednesday ribs, move the fish to the weekend"), utt_id: "L1", voice_source: "passport"))
-            turn.expect(uttID: "L1")
+            turn.expect(messageID: "L1")
             turn.handle(frame: ["type": "turn", "phase": "thinking"])
             turn.handle(frame: ["type": "turn", "phase": "tool", "label": "Bash", "input_summary": #"{"command":"cat ~/Documents/menu.md","description":"Read the saved menu"}"#])
             show()
         }
         later(4) {
             turn.handle(frame: ["type": "turn", "phase": "tool", "label": "Bash ✓"])
-            turn.handle(frame: ["type": "answer_final", "utt_id": "L1", "text": long, "speech_id": "ch:L1"])
+            turn.handle(frame: ["type": "answer_final", "message_ids": ["L1"], "text": long, "speech_id": "ch:L1"])
             show()
         }
         later(4.2) {
-            let row = ImlogEntry(at: now(), speaker: "多多", kind: "answer", text: long, utt_id: "L1", unspoken: true)
+            let row = ImlogEntry(at: now(), speaker: "多多", kind: "answer", text: long, unspoken: true, message_ids: ["L1"])
             entries.append(row)
             turn.settle(with: [row])
             show()
         }
         later(6) {
             entries.append(ImlogEntry(at: now(), kind: "typed", text: L("好的，知道了", "OK, got it"), utt_id: "L2", voice_source: "phone"))
-            turn.expect(uttID: "L2")
+            turn.expect(messageID: "L2")
             show()
         }
         later(6.5) {
-            let a = ImlogEntry(at: now(), speaker: "多多", kind: "answer", text: L("嗯，随时喊我。", "Sure, call me anytime."), utt_id: "L2", unspoken: true)
-            turn.handle(frame: ["type": "answer_final", "utt_id": "L2", "text": a.text])
+            let a = ImlogEntry(at: now(), speaker: "多多", kind: "answer", text: L("嗯，随时喊我。", "Sure, call me anytime."), unspoken: true, message_ids: ["L2"])
+            turn.handle(frame: ["type": "answer_final", "message_ids": ["L2"], "text": a.text])
             entries.append(a)
             turn.settle(with: [a])
             show()

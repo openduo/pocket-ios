@@ -18,8 +18,12 @@ struct EngineSnapshot: Equatable {
     var lastReply: String?
 }
 
-/// Coordinates the Passport link, voice notes and replies. All state lives on `queue`, which is
+/// Coordinates the Passport link, voice notes and replies, and keeps the room's `/live` connection
+/// (held by `AmbientController`) open while it is wanted. All state lives on `queue`, which is
 /// also the CoreBluetooth delegate queue, so a BLE notification costs no thread hop.
+///
+/// Every `/live` frame passes through here: rows go to the conversation store first (it holds the
+/// cursor) and then to the reply tracker; lifecycle events settle Passport RESULTs.
 ///
 /// Background rules (measured on an iPhone XS Max: iOS killed an app at 93 % CPU over 52 s for
 /// re-rendering SwiftUI on every frame): per audio frame only decode + append; logging and
@@ -29,7 +33,7 @@ final class PocketEngine: @unchecked Sendable {
 
     let queue = DispatchQueue(label: "pocket.engine", qos: .userInitiated)
     let link: PassportLink
-    private let display = DisplaySocket()
+    private var live: LiveSocket { AmbientController.shared.live }
     private var tuning = PocketTuning.load()
     private var settings = ChannelSettings.load()
 
@@ -43,12 +47,33 @@ final class PocketEngine: @unchecked Sendable {
     private var pressWall0 = 0.0
 
     // Reply wait (docs/ble-protocol.md §9). No time limit: it ends on the answer, on
-    // `turn idle`, or when the display socket cannot be restored.
+    // `turn idle`, or when the `/live` connection cannot be restored.
     private var awaiting = false
     private var waitStarted = 0.0
-    private var displayBusy = false
+    private var liveBusy = false
+    /// The connection was opened with a cursor: rows before `ready` are its replay, and `ready`
+    /// settles what the app still waits on.
+    private var liveReplays = false
+    /// Counts `/live` opens; a `ready` speaks for messages accepted before its connection opened.
+    private var liveGeneration = 0
+    /// The current connection's `ready` and the generation it belongs to.
+    private var lastReady: (ready: LiveEvent.Ready, generation: Int)?
+    /// Replayed rows not yet given to the store, until `ready` (one write for the batch).
+    private var replayRows: [ImlogEntry]?
     /// Callers of a running `fetchMissed`.
     private var fetchWaiters: [((Bool) -> Void)?] = []
+
+    /// A Passport press waiting for its RESULT, by message id (docs/ble-protocol.md §8).
+    private struct PressResult {
+        var pressID: UInt16
+        var wait: VoiceResultWait
+        var durationMs: Int
+        /// The `/live` generation when the upload got its 202. Only a `ready` of a connection opened
+        /// after it is a snapshot that includes the message.
+        var acceptedGeneration: Int?
+        var expiry: DispatchWorkItem
+    }
+    private var results: [String: PressResult] = [:]
 
     private var serverReachable: Bool?
     private let pressTask = BackgroundTask(name: "pocket.press")
@@ -71,8 +96,6 @@ final class PocketEngine: @unchecked Sendable {
         link.onState = { [unowned self] s, d in
             update { $0.link = s; $0.linkDetail = d; $0.deviceName = self.link.peripheralName }
         }
-        display.onFrame = { [unowned self] f in queue.async { self.displayFrame(f) } }
-        display.onClosed = { [unowned self] why in queue.async { self.displayClosed(why) } }
     }
 
     /// Called from application(_:didFinishLaunchingWithOptions:).
@@ -96,26 +119,33 @@ final class PocketEngine: @unchecked Sendable {
             settings = ChannelSettings.load()
             tuning = PocketTuning.load()
             Tailnet.shared.apply(settings)
-            display.close()
-            ensureDisplay("settings")
+            DispatchQueue.global(qos: .userInitiated).async { [self] in
+                AmbientController.shared.closeLive()
+                queue.async { self.ensureLiveOnQueue("settings") }
+            }
         }
     }
 
     func appBecameActive() {
         queue.async { [self] in
             Tailnet.shared.closeIdle()
-            ensureDisplay("foreground")
+            ensureLiveOnQueue("foreground")
             link.retryStaleBond()
         }
     }
 
-    /// A request failed for lack of a connection: check the display socket now.
+    /// A request failed for lack of a connection: check the `/live` connection now.
     func connectionLost() {
-        queue.async { [self] in ensureDisplay("request_failed") }
+        queue.async { [self] in ensureLiveOnQueue("request_failed") }
     }
 
-    /// Pause between display-socket attempts while the app is visible: the web edge's 1 s
-    /// (`transport.js`). Each attempt is itself bounded by `connectTimeout`.
+    /// Makes sure the `/live` connection is open while it is wanted (ambient on and off).
+    func ensureLive(_ reason: String) {
+        queue.async { [self] in if wantLive { ensureLiveOnQueue(reason) } }
+    }
+
+    /// Pause between `/live` attempts while the app is visible or ambient runs: the web edge's
+    /// 1 s (`transport.js`). Each attempt is itself bounded by `connectTimeout`.
     static let redialDelay: TimeInterval = 1
 
     // MARK: device messages
@@ -145,9 +175,9 @@ final class PocketEngine: @unchecked Sendable {
             // adopt the wait so REPLY_DONE is still sent.
             if !awaiting {
                 AppLog.shared.log("keepalive_adopt", ["press": id, "app": AppPhase.value])
-                startReplyWait(uttID: nil)
+                startReplyWait(messageID: nil)
             } else {
-                ensureDisplay("keepalive")
+                ensureLiveOnQueue("keepalive")
             }
         }
     }
@@ -175,42 +205,111 @@ final class PocketEngine: @unchecked Sendable {
         }
     }
 
+    /// Uploads the press as a voice message. RESULT waits for the channel's `message cleaned` on
+    /// `/live` (or a failure), all within `resultDeadline` from PRESS_END. The wait is registered
+    /// under the message id before the upload, so an event that beats the 202 is not missed.
     private func finishPress(_ c: CompletedPress) {
         let endWall = CPUClock.uptime(), endCPU = CPUClock.processSeconds()
         let pressWall = max(endWall - pressWall0, 0.001)
         let pressCPUPct = (endCPU - pressCPU0) / pressWall * 100
         let note = VoiceNote(source: .passport, packets: c.packets)
+        let id = VoiceUploader.messageID(for: note)
         let room = settings.room
         let uploader = VoiceUploader(transport: TsnetTransport(tuning: tuning), tuning: tuning)
+        let fields: [String: Any] = [
+            "press": c.pressID, "message_id": id, "packets": c.stats.packets, "declared": c.stats.declaredCount ?? -1,
+            "gaps": c.stats.gaps, "dups": c.stats.duplicates, "bytes": c.stats.bytes, "end": c.stats.end.rawValue,
+            "implicit_start": c.stats.implicitStart, "audio_ms": note.durationMs, "press_wall_s": pressWall,
+            "press_cpu_pct": pressCPUPct,
+        ]
         pressTask.begin()
+        update { $0.lastPressAt = Date() }
+        // A press with no audio is an empty note; nothing is sent.
+        guard !note.packets.isEmpty else {
+            link.send(.result(pressID: c.pressID, code: .empty, text: ""))
+            AppLog.shared.log("press", fields.merging(["code": ResultCode.empty.rawValue]) { a, _ in a })
+            pressTask.end()
+            return
+        }
+        guard settings.isComplete else {
+            link.send(.result(pressID: c.pressID, code: .notConnectedToServer, text: ""))
+            setReachable(false)
+            pressTask.end()
+            return
+        }
+        let deadline = tuning.resultDeadline
+        let expiry = DispatchWorkItem { [weak self] in self?.resultExpired(id) }
+        results[id] = PressResult(pressID: c.pressID, wait: VoiceResultWait(messageID: id), durationMs: note.durationMs,
+                                  expiry: expiry)
+        queue.asyncAfter(deadline: .now() + deadline, execute: expiry)
         Task.detached { [self] in
-            let report = settings.isComplete
-                ? await uploader.upload(note, room: room)
-                : VoiceUploadReport(outcome: .notConnected("no channel configured"), attempts: 0, trail: [], elapsed: 0)
+            let report = await uploader.upload(note, room: room, within: deadline - (CPUClock.uptime() - endWall))
             queue.async { [self] in
                 let doneWall = CPUClock.uptime(), doneCPU = CPUClock.processSeconds()
-                let outcome = report.outcome
-                link.send(.result(pressID: c.pressID, code: outcome.resultCode, text: outcome.text))
-                // One line per press, with its CPU share (background CPU budget).
-                AppLog.shared.log("press", [
-                    "press": c.pressID, "voice_id": note.id.uuidString.lowercased(), "app": AppPhase.value,
-                    "packets": c.stats.packets, "declared": c.stats.declaredCount ?? -1, "gaps": c.stats.gaps,
-                    "dups": c.stats.duplicates, "bytes": c.stats.bytes, "end": c.stats.end.rawValue,
-                    "implicit_start": c.stats.implicitStart, "audio_ms": note.durationMs,
-                    "press_wall_s": pressWall, "press_cpu_pct": pressCPUPct,
-                    "upload_ms": Int(report.elapsed * 1000), "attempts": report.attempts, "trail": report.trail,
-                    "upload_cpu_pct": (doneCPU - endCPU) / max(doneWall - endWall, 0.001) * 100,
-                    "code": outcome.resultCode.rawValue, "text_len": outcome.text.count,
-                ])
-                setReachable(!(outcome.resultCode == .notConnectedToServer))
-                update { $0.lastPressAt = Date() }
-                if outcome.resultCode == .transcribed {
-                    startReplyWait(uttID: outcome.uttID)
-                    ConversationStore.shared.passportNote(uttID: outcome.uttID, durationMs: note.durationMs)
+                // One line per upload, with its CPU share (background CPU budget).
+                AppLog.shared.log("press", fields.merging([
+                    "app": AppPhase.value, "upload_ms": Int(report.elapsed * 1000), "attempts": report.attempts,
+                    "trail": report.trail, "upload_cpu_pct": (doneCPU - endCPU) / max(doneWall - endWall, 0.001) * 100,
+                    "accepted": report.outcome.messageID != nil,
+                ]) { a, _ in a })
+                setReachable(report.outcome.failureCode != .notConnectedToServer)
+                if let n = report.upgrade { ConversationStore.shared.upgradeNeeded(n) }
+                if let code = report.outcome.failureCode {
+                    finishResult(id, VoiceResultWait.Result(code: code, text: ""))
+                } else if results[id] != nil {
+                    results[id]?.acceptedGeneration = liveGeneration
+                    settleAccepted([id])
+                    if results[id] != nil { ensureLiveOnQueue("result_wait") }
                 }
-                pressTask.end()
             }
         }
+    }
+
+    /// Feeds one `/live` event (not `ready`) to the presses waiting for their RESULT.
+    private func settleResults(_ event: LiveEvent) {
+        for (id, r) in results {
+            var w = r.wait
+            let out = w.handle(event)
+            results[id]?.wait = w
+            if let out { finishResult(id, out) }
+        }
+    }
+
+    /// The one settlement path for accepted presses, run at each `ready` and at each 202: a row
+    /// already seen settles RESULT 0; otherwise the current connection's `ready`, when that
+    /// connection opened after the 202, settles by `ready.messages`.
+    private func settleAccepted(_ ids: [String]) {
+        for id in ids {
+            guard var r = results[id], let accepted = r.acceptedGeneration else { continue }
+            var out = r.wait.accepted()
+            if out == nil, let last = lastReady, last.generation > accepted {
+                out = r.wait.handle(.ready(last.ready))
+            }
+            results[id] = r
+            if let out { finishResult(id, out) }
+        }
+    }
+
+    private func resultExpired(_ id: String) {
+        // The reachability of the last socket check, not the held socket, which may be stale
+        // after a suspension.
+        guard var r = results[id], let out = r.wait.expired(connected: serverReachable == true) else { return }
+        results[id] = r
+        finishResult(id, out)
+    }
+
+    /// Sends RESULT once; RESULT 0 starts the reply wait for the message.
+    private func finishResult(_ id: String, _ out: VoiceResultWait.Result) {
+        guard let r = results.removeValue(forKey: id) else { return }
+        r.expiry.cancel()
+        link.send(.result(pressID: r.pressID, code: out.code, text: out.text))
+        AppLog.shared.log("press_result", ["press": r.pressID, "message_id": id, "code": out.code.rawValue,
+                                           "text_len": out.text.count, "app": AppPhase.value])
+        if out.code == .transcribed {
+            startReplyWait(messageID: id)
+            ConversationStore.shared.passportNote(messageID: id, durationMs: r.durationMs)
+        }
+        if results.isEmpty { pressTask.end() }
     }
 
     private func linkReady() {
@@ -224,7 +323,7 @@ final class PocketEngine: @unchecked Sendable {
                     source: "link_ready")
         }
         probeServer()
-        // A BLE wake: answers that came while the app was suspended exist only in the room log.
+        // A BLE wake: answers that came while the app was suspended are rows above the cursor.
         fetchMissed("link_ready")
     }
 
@@ -275,17 +374,16 @@ final class PocketEngine: @unchecked Sendable {
 
     // MARK: replies
 
-    /// `uttID` from the voice-note response marks when the note was sent: the first answer after
-    /// it is the reply, whatever `utt_id` the answer names (`ReplyTracker`); nil means the next
-    /// answer is the reply.
-    private func startReplyWait(uttID: String?) {
-        let start = tracker.expect(uttID: uttID)
-        AppLog.shared.log("reply_wait", ["utt_id": uttID ?? "", "app": AppPhase.value])
+    /// The device waits for the answer to `messageID` (`ReplyTracker`); nil when the wait was
+    /// adopted from a KEEPALIVE after a relaunch: the next answer is the reply. WORK 1 follows the
+    /// message's `turn received`.
+    private func startReplyWait(messageID: String?) {
+        tracker.expect(messageID: messageID)
+        AppLog.shared.log("reply_wait", ["message_id": messageID ?? "", "app": AppPhase.value])
         awaiting = true
         waitStarted = CPUClock.uptime()
         replyTask.begin()
-        deliver(start, source: "wait")
-        ensureDisplay("reply_wait")
+        ensureLiveOnQueue("reply_wait")
     }
 
     private func endReplyWait(_ why: String) {
@@ -326,104 +424,164 @@ final class PocketEngine: @unchecked Sendable {
         savedReplyID = tracker.memory.lastReplyID
     }
 
-    private func displayFrame(_ f: [String: Any]) {
+    // MARK: /live
+
+    /// One `/live` text frame, already decoded (called on a Go thread).
+    func liveFrame(_ f: [String: Any]) {
+        queue.async { [self] in handleLive(f) }
+    }
+
+    /// The `/live` connection closed from the far side.
+    func liveClosed(_ why: String) {
+        queue.async { [self] in
+            // A replay cut short is read again from the same cursor.
+            replayRows = nil
+            lastReady = nil
+            AppLog.shared.log("live_lost", ["reason": why, "app": AppPhase.value])
+            if wantLive { ensureLiveOnQueue("reopen") }
+        }
+    }
+
+    private func handleLive(_ f: [String: Any]) {
+        let event = LiveEvent.decode(f)
+        switch event {
+        case .row(_, let e):
+            settleResults(.row(seq: e.seq ?? 0, e))
+            if replayRows != nil {
+                replayRows?.append(e)
+            } else {
+                deliver(tracker.rows(ConversationStore.shared.admit([e])), source: "live")
+            }
+            return
+        case .ready(let r):
+            let replayed = liveReplays
+            let rows = ConversationStore.shared.admit(replayRows ?? [])
+            replayRows = nil
+            ConversationStore.shared.ready(r, replayed: replayed)
+            lastReady = (r, liveGeneration)
+            settleAccepted(Array(results.keys))
+            deliver(tracker.restore(turn: r.turn), source: "ready")
+            if !replayed {
+                // Rows below the room's cursor are never sent again: live answers waiting for
+                // theirs are forgotten.
+                tracker.forgetDelivered()
+            }
+            deliver(tracker.rows(rows), source: replayed ? "replay" : "ready")
+            return
+        case .cleaned, .failed:
+            settleResults(event!)
+            if case .failed(let id, .brainUnreachable) = event { deliver(tracker.messageFailed(id), source: "failed") }
+        case nil:
+            break
+        }
         ConversationStore.shared.frame(f)
         deliver(tracker.handle(frame: f), source: "live")
     }
 
-    /// Reads the room log once, without the display socket, and forwards an answer the device
-    /// has not had (BLE wake, background refresh). `done` gets whether the log was
-    /// read, on `queue`. A fetch already running absorbs this one.
+    /// Reads the rows above the cursor once, without the socket, and forwards an answer the
+    /// device has not had (BLE wake, background refresh). `done` gets whether the rows were read,
+    /// on `queue`. A fetch already running absorbs this one.
     func fetchMissed(_ reason: String, done: ((Bool) -> Void)? = nil) {
         queue.async { [self] in
             guard settings.isComplete else { done?(false); return }
             fetchWaiters.append(done)
             guard fetchWaiters.count == 1 else { return }
-            let s = settings, tuning = tuning
+            let client = ChannelClient(settings: settings, tuning: tuning)
             let t0 = CPUClock.uptime()
-            DispatchQueue.global(qos: .utility).async { [self] in
-                let entries = Self.fetchLog(s, tuning)
+            Task.detached { [self] in
+                // Without a cursor there is nothing to catch up from: the first `ready` sets it.
+                let since = ConversationStore.shared.cursor()
+                var got: RowsSince?
+                if let since { got = try? await client.rows(since: since) }
                 queue.async { [self] in
-                    AppLog.shared.log("fetch_missed", ["reason": reason, "ok": entries != nil, "rows": entries?.count ?? 0,
+                    var ok = since == nil
+                    if let got {
+                        ok = true
+                        for e in got.entries { settleResults(.row(seq: e.seq ?? 0, e)) }
+                        let rows = ConversationStore.shared.admit(got.entries, roomSeq: got.seq)
+                        deliver(tracker.rows(rows), source: reason)
+                    }
+                    AppLog.shared.log("fetch_missed", ["reason": reason, "ok": ok, "rows": got?.entries.count ?? 0,
                                                        "ms": Int((CPUClock.uptime() - t0) * 1000), "link": link.state.rawValue,
                                                        "app": AppPhase.value])
-                    if let entries { deliver(tracker.catchUp(entries: entries), source: reason) }
                     let waiters = fetchWaiters
                     fetchWaiters = []
-                    for w in waiters { w?(entries != nil) }
+                    for w in waiters { w?(ok) }
                 }
             }
         }
     }
 
-    /// The display socket matters while the screen is visible, while a Passport reply is pending,
-    /// and while ambient runs (its answers land in the thread cache).
-    private var wantDisplay: Bool { awaiting || AppPhase.isActive || AmbientController.shared.snapshot().isOn }
-
-    private func displayClosed(_ why: String) {
-        AppLog.shared.log("display_closed", ["reason": why, "app": AppPhase.value])
-        if wantDisplay { ensureDisplay("reopen") }
+    /// The connection matters while the screen is visible, while a Passport press or reply is
+    /// pending, and while ambient runs (it is ambient's socket, and answers land in the thread).
+    private var wantLive: Bool {
+        awaiting || !results.isEmpty || AppPhase.isActive || AmbientController.shared.snapshot().isOn
     }
 
-    /// Makes sure the display socket is live, then catches up from the room log.
-    private func ensureDisplay(_ reason: String) {
-        guard settings.isComplete, !displayBusy else { return }
-        displayBusy = true
+    /// Makes sure the `/live` connection is live (a stale one is replaced, from the stored
+    /// cursor), then refreshes the room's state.
+    private func ensureLiveOnQueue(_ reason: String) {
+        guard settings.isComplete, !liveBusy else { return }
+        liveBusy = true
         let s = settings, tuning = tuning
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             let t0 = CPUClock.uptime()
             var opened = false
             var failure: String?
-            if !(display.isOpen && display.ping(timeout: tuning.pingTimeout)) {
+            if !(live.isOpen && live.ping(timeout: tuning.pingTimeout)) {
+                let since = ConversationStore.shared.cursor()
+                queue.sync {
+                    liveGeneration += 1
+                    lastReady = nil
+                    liveReplays = since != nil
+                    replayRows = since != nil ? [] : nil
+                }
                 do {
-                    try display.open(room: s, timeout: tuning.connectTimeout)
+                    try AmbientController.shared.openLive(s, since: since, timeout: tuning.connectTimeout)
                     opened = true
                 } catch {
                     failure = "\(error)"
                 }
             }
-            // Catch-up: an answer may have arrived while the socket was down.
-            var entries: [[String: Any]] = []
+            // Room status (health, limits, date) for the conversation screen.
             if failure == nil {
-                if let e = Self.fetchLog(s, tuning) {
-                    entries = e
-                    if opened, reason == "reopen" { ConversationStore.shared.displayReopened() }
+                if let st = Self.fetchState(s, tuning) {
+                    ConversationStore.shared.connected(st)
                 } else {
                     failure = "state request failed"
                 }
             }
             if failure != nil { ConversationStore.shared.connectFailed() }
             queue.async { [self] in
-                displayBusy = false
-                AppLog.shared.log("display", ["reason": reason, "opened": opened, "err": failure ?? "",
-                                              "ms": Int((CPUClock.uptime() - t0) * 1000), "app": AppPhase.value])
+                liveBusy = false
+                AppLog.shared.log("live", ["reason": reason, "opened": opened, "err": failure ?? "",
+                                           "ms": Int((CPUClock.uptime() - t0) * 1000), "app": AppPhase.value])
                 setReachable(failure == nil)
                 if failure != nil, AppPhase.isActive || AmbientController.shared.snapshot().isOn {
-                    queue.asyncAfter(deadline: .now() + Self.redialDelay) { [self] in ensureDisplay("retry") }
+                    // Checked again when the pause ends: the app may have left the foreground.
+                    queue.asyncAfter(deadline: .now() + Self.redialDelay) { [self] in
+                        if AppPhase.isActive || AmbientController.shared.snapshot().isOn { ensureLiveOnQueue("retry") }
+                    }
                 }
                 if failure != nil, awaiting {
-                    // ble-protocol §9: the answer cannot arrive without the display socket.
+                    // ble-protocol §9: the answer cannot arrive without the connection.
                     // setReachable has told the device (APP_STATE 1); release it from its wait.
                     link.send(.replyDone(replyID: PocketConstants.noReplyID))
-                    endReplyWait("display_lost")
+                    endReplyWait("live_lost")
                 }
-                deliver(tracker.catchUp(entries: entries), source: "catchup")
             }
         }
     }
-
 }
 
 extension PocketEngine {
-    /// `GET /api/state`: the room's recent log (oldest first), or nil when the request failed.
-    /// Also refreshes the conversation cache. Blocking; call off `queue`.
-    fileprivate static func fetchLog(_ s: ChannelSettings, _ tuning: PocketTuning) -> [[String: Any]]? {
-        guard let (status, body) = try? Tailnet.shared.request(method: "GET", path: "/api/state?room=\(s.roomQuery)",
+    /// `GET /api/state`, or nil when the request failed. Blocking; call off `queue`.
+    fileprivate static func fetchState(_ s: ChannelSettings, _ tuning: PocketTuning) -> RoomState? {
+        guard let (status, body) = try? Tailnet.shared.request(method: "GET", path: ChannelPaths.state(room: s.room),
                                                                timeout: tuning.connectTimeout,
                                                                upTimeout: tuning.connectTimeout),
-              status == 200, let obj = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return nil }
-        if let st = RoomState.decode(body) { ConversationStore.shared.connected(st) }
-        return obj["imlog"] as? [[String: Any]] ?? []
+              status == 200 else { return nil }
+        return RoomState.decode(body)
     }
 }
 

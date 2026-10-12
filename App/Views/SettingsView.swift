@@ -377,7 +377,11 @@ final class ConnectionCheck: ObservableObject {
                 case .ok(let st):
                     var t = String(localized: "房间「\(st.roomName)」存在")
                     if st.daemonOK == true { t += String(localized: "，多多在线") } else if st.daemonOK == false { t += String(localized: "，多多暂时无法回复") }
-                    if st.cerebellumOK == false { t += String(localized: "；语音服务不可用") }
+                    if st.cerebellumMismatch {
+                        t += String(localized: "；小脑与 channel 版本不一致，需要两端同时升级")
+                    } else if st.cerebellumOK == false {
+                        t += String(localized: "；语音服务不可用")
+                    }
                     items[2] = .init(id: 2, text: t, state: .ok)
                 case .unknownRoom(let c):
                     rooms = c.rooms

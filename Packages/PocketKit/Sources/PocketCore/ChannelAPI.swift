@@ -4,7 +4,7 @@
 import Foundation
 
 /// One attachment as the channel names it (`AmbientAttachmentName`); `path` is present only in an
-/// upload result, which goes back into `inject.attachments`.
+/// upload result, which goes back into a typed message's `attachments`.
 public struct ChannelAttachment: Codable, Equatable, Hashable, Sendable {
     public var name: String
     public var mime: String
@@ -25,7 +25,12 @@ public struct ChannelAttachment: Codable, Equatable, Hashable, Sendable {
 }
 
 /// One row of the room log (`imlog-YYYY-MM-DD.jsonl`, `renderImlogLine` in the channel's store).
+/// Rows are append-only and written once. `seq` is the row's cursor; `utt_id` correlates it (a
+/// message row's `utt_id` is the message id).
 public struct ImlogEntry: Codable, Equatable, Hashable, Sendable {
+    /// The room's cursor value for this row. Missing on rows written before the channel had one;
+    /// such rows are never replayed by cursor.
+    public var seq: Int?
     public var at: String
     public var speaker: String?
     public var kind: String?
@@ -35,10 +40,16 @@ public struct ImlogEntry: Codable, Equatable, Hashable, Sendable {
     public var truncated: Bool?
     public var unspoken: Bool?
     public var voice_source: String?
+    /// Answer rows: the messages the answer's turn covered.
+    public var message_ids: [String]?
+    /// Truncated answer rows: the whole answer (`text` is the part that was heard).
+    public var full_text: String?
 
-    public init(at: String, speaker: String? = nil, kind: String? = nil, text: String, utt_id: String? = nil,
-                attachments: [ChannelAttachment]? = nil, truncated: Bool? = nil, unspoken: Bool? = nil,
-                voice_source: String? = nil) {
+    public init(seq: Int? = nil, at: String, speaker: String? = nil, kind: String? = nil, text: String,
+                utt_id: String? = nil, attachments: [ChannelAttachment]? = nil, truncated: Bool? = nil,
+                unspoken: Bool? = nil, voice_source: String? = nil, message_ids: [String]? = nil,
+                full_text: String? = nil) {
+        self.seq = seq
         self.at = at
         self.speaker = speaker
         self.kind = kind
@@ -48,7 +59,12 @@ public struct ImlogEntry: Codable, Equatable, Hashable, Sendable {
         self.truncated = truncated
         self.unspoken = unspoken
         self.voice_source = voice_source
+        self.message_ids = message_ids
+        self.full_text = full_text
     }
+
+    /// The text a surface shows: the whole answer for a truncated row, else `text`.
+    public var shownText: String { full_text ?? text }
 
     /// Speaker label of DuoDuo's own rows (`DUODUO_LABEL` in ambient-protocol).
     public static let duoduoLabel = "多多"
@@ -62,9 +78,10 @@ public struct ImlogEntry: Codable, Equatable, Hashable, Sendable {
     /// Overheard room speech (ambient mode).
     public var isHeard: Bool { !isTyped && !isAnswer && !isReaction }
 
-    /// Identity used to merge a live append into the cache. Same rule as the web UI
-    /// (`appendImlogEntries` in conversation.js).
+    /// Identity used to merge a row into the cache: its `seq`; rows without one use the web UI's
+    /// older rule (`appendImlogEntries` in conversation.js).
     public var key: String {
+        if let seq { return "seq:\(seq)" }
         if isTyped, let u = utt_id, !u.isEmpty { return "typed:" + u }
         return "\(at)|\(kind ?? "")|\(text)"
     }
@@ -87,25 +104,26 @@ public struct RoomState: Equatable, Sendable {
     public var daemonOK: Bool?
     public var cerebellumOK: Bool?
     public var muted: Bool
-    public var imlog: [ImlogEntry]
     /// `limits.upload_max_bytes`. nil when the channel does not publish it (older channel) or when
     /// uploads are disabled (`null`); see `uploadsDisabled`.
     public var uploadMaxBytes: Int?
     /// True when the channel published `limits` with a null bound: upload and voice are off.
     public var uploadsDisabled: Bool
     public var configIssues: [String]
+    /// `cerebellum_halt` with reason `protocol`: the channel and its cerebellum speak different
+    /// majors, and both must be upgraded together.
+    public var cerebellumMismatch: Bool
 
     public init(room: String = "", roomName: String = "", date: String = "", daemonOK: Bool? = nil,
-                cerebellumOK: Bool? = nil, muted: Bool = false,
-                imlog: [ImlogEntry] = [], uploadMaxBytes: Int? = nil, uploadsDisabled: Bool = false,
-                configIssues: [String] = []) {
+                cerebellumOK: Bool? = nil, muted: Bool = false, uploadMaxBytes: Int? = nil, uploadsDisabled: Bool = false,
+                configIssues: [String] = [], cerebellumMismatch: Bool = false) {
+        self.cerebellumMismatch = cerebellumMismatch
         self.room = room
         self.roomName = roomName
         self.date = date
         self.daemonOK = daemonOK
         self.cerebellumOK = cerebellumOK
         self.muted = muted
-        self.imlog = imlog
         self.uploadMaxBytes = uploadMaxBytes
         self.uploadsDisabled = uploadsDisabled
         self.configIssues = configIssues
@@ -120,7 +138,6 @@ public struct RoomState: Equatable, Sendable {
         s.daemonOK = o["daemon_ok"] as? Bool
         s.cerebellumOK = o["cerebellum_ok"] as? Bool
         s.muted = ((o["controls"] as? [String: Any])?["mute"] as? [String: Any])?["active"] as? Bool ?? false
-        s.imlog = ImlogEntry.decodeList(o["imlog"])
         if let limits = o["limits"] as? [String: Any] {
             if let n = limits["upload_max_bytes"] as? Int, n > 0 {
                 s.uploadMaxBytes = n
@@ -129,6 +146,7 @@ public struct RoomState: Equatable, Sendable {
             }
         }
         s.configIssues = o["config_issues"] as? [String] ?? []
+        s.cerebellumMismatch = (o["cerebellum_halt"] as? [String: Any])?["reason"] as? String == "protocol"
         return s
     }
 }
@@ -145,16 +163,33 @@ public struct RoomChoices: Equatable, Sendable {
     }
 }
 
-/// `POST /api/inject` 200 body.
-public struct InjectReceipt: Equatable, Sendable {
-    public var uttID: String?
+/// `POST /api/messages` 202 body: the message id (the `Idempotency-Key` sent) and the channel's
+/// accept time. A repeated key answers with the first receipt.
+public struct MessageReceipt: Equatable, Sendable {
+    public var messageID: String
     public var at: String?
-    public var recordAvailable: Bool
 
-    public static func decode(_ body: Data) -> InjectReceipt {
-        let o = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
-        return InjectReceipt(uttID: o["utt_id"] as? String, at: o["at"] as? String,
-                             recordAvailable: o["record_available"] as? Bool ?? true)
+    public init(messageID: String, at: String? = nil) {
+        self.messageID = messageID
+        self.at = at
+    }
+
+    public static func decode(_ body: Data) -> MessageReceipt? {
+        guard let o = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+              let id = o["message_id"] as? String else { return nil }
+        return MessageReceipt(messageID: id, at: o["at"] as? String)
+    }
+}
+
+/// `GET /api/imlog?since=` body: the rows after the cursor and the room's cursor.
+public struct RowsSince: Equatable, Sendable {
+    public var entries: [ImlogEntry]
+    public var seq: Int
+
+    public static func decode(_ body: Data) -> RowsSince? {
+        guard let o = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+              let seq = (o["seq"] as? NSNumber)?.intValue else { return nil }
+        return RowsSince(entries: ImlogEntry.decodeList(o["entries"]), seq: seq)
     }
 }
 
@@ -168,17 +203,26 @@ public enum ChannelPaths {
 
     public static func state(room: String) -> String { "/api/state?room=" + q(room) }
     public static func imlog(room: String, date: String) -> String { "/api/imlog?room=\(q(room))&date=\(q(date))" }
-    public static func inject(room: String) -> String { "/api/inject?room=" + q(room) }
+    public static func imlog(room: String, since: Int) -> String { "/api/imlog?room=\(q(room))&since=\(since)" }
+    public static func messages(room: String) -> String { "/api/messages?room=" + q(room) }
     public static func upload(room: String, name: String) -> String { "/api/upload?room=\(q(room))&name=\(q(name))" }
-    public static func live(room: String) -> String { "/live?room=" + q(room) }
+    /// The room's one `/live` connection; `since` asks for the rows after that cursor first.
+    public static func live(room: String, since: Int? = nil) -> String {
+        "/live?room=" + q(room) + (since.map { "&since=\($0)" } ?? "")
+    }
 
     public static func attachment(room: String, _ a: ChannelAttachment) -> String? {
         guard let sha = a.sha256 else { return nil }
         return "/api/attachment?room=\(q(room))&sha256=\(q(sha))&mime=\(q(a.mime))&name=\(q(a.name))"
     }
 
-    /// `inject` body: text plus the upload results (with `path`).
-    public static func injectBody(text: String, attachments: [ChannelAttachment]) -> Data {
+    /// Headers of a typed message. The key is the message id; a retry sends the same key.
+    public static func typedMessageHeaders(key: String) -> [String: String] {
+        ["Content-Type": "application/json", "Idempotency-Key": key]
+    }
+
+    /// Typed message body: text plus the upload results (with `path`).
+    public static func typedMessageBody(text: String, attachments: [ChannelAttachment]) -> Data {
         var obj: [String: Any] = ["text": text]
         if !attachments.isEmpty {
             obj["attachments"] = attachments.map { a -> [String: Any] in

@@ -172,6 +172,12 @@ final class AppModel: ObservableObject {
 
     // MARK: derived display state
 
+    /// Why voice is off: the channel and its cerebellum speak different majors, or the service is down.
+    var voiceUnavailableText: String {
+        chat.room?.cerebellumMismatch == true
+            ? String(localized: "小脑与 channel 版本不一致，需要两端同时升级") : String(localized: "语音服务暂不可用")
+    }
+
     var voiceAvailable: Bool { chat.room?.cerebellumOK != false && chat.room?.uploadsDisabled != true }
 
     /// Nav subtitle, and the pose for the empty state and the ambient view (design §2 table).
@@ -263,6 +269,8 @@ final class AppModel: ObservableObject {
     /// from then on is in the note.
     /// Synchronous, so the pressed button and the preparing sheet draw in the touch's own frame.
     func beginHold() -> Bool {
+        // Hold-to-talk is off while ambient mode is on: the room already hears the phone.
+        guard !ambient.isOn else { return false }
         HoldTiming.shared.mark("begin_hold")
         if VoiceIO.permission == .undetermined {
             // The permission alert takes the finger off the button: ask now, record next time.

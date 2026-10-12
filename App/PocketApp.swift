@@ -74,7 +74,8 @@ struct RootView: View {
 }
 
 /// Background App Refresh catch-up (the app has no push notifications): when iOS grants a
-/// refresh, read the room log and forward the newest answer the Passport has not had. iOS decides
+/// refresh, read the rows above the cursor (`GET /api/imlog?since=`) and forward the newest answer
+/// the Passport has not had. iOS decides
 /// when (and whether) it runs; the request asks for no earliest time, so there is no interval
 /// constant.
 enum AnswerRefresh {

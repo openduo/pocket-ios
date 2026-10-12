@@ -12,7 +12,7 @@ public enum ThreadRow: Identifiable, Equatable, Sendable {
     case pending(OutboxItem)
     case working(TurnState.Working)
     /// A live answer whose log row has not arrived. `id` is the row id it shares with that log
-    /// row (`ans:<utt_id>`), so the bubble is updated in place when the row lands.
+    /// row (`ans:<message_ids>`), so the bubble is updated in place when the row lands.
     case provisional(TurnState.Provisional, id: String)
 
     public struct Mine: Equatable, Sendable {
@@ -24,7 +24,7 @@ public enum ThreadRow: Identifiable, Equatable, Sendable {
         /// Known for voice notes this phone uploaded (Passport or hold-to-talk).
         public var durationMs: Int?
         public var attachments: [ChannelAttachment]
-        /// Meta under the bubble: 已送达, or 已送达，记录未保存.
+        /// Meta under the bubble: 已送达, or 没送到多多 when delivery to the brain failed.
         public var delivery: String?
     }
 
@@ -90,18 +90,19 @@ public struct ThreadBuilder {
         public var turn: TurnState
         /// Voice-note durations by `utt_id`, for notes this phone uploaded.
         public var durations: [String: Int]
-        /// `record_unavailable` utterances seen live.
-        public var recordLost: Set<String>
+        /// Messages whose delivery to the brain failed after their row was written
+        /// (`brain_unreachable`, seen live). The row stays (append-only record).
+        public var undelivered: Set<String>
         /// Live-only room notes ("听到了，不是在叫我").
         public var notes: [(at: Date, text: String)]
 
         public init(entries: [ImlogEntry], outbox: [OutboxItem] = [], turn: TurnState = TurnState(),
-                    durations: [String: Int] = [:], recordLost: Set<String> = [], notes: [(at: Date, text: String)] = []) {
+                    durations: [String: Int] = [:], undelivered: Set<String> = [], notes: [(at: Date, text: String)] = []) {
             self.entries = entries
             self.outbox = outbox
             self.turn = turn
             self.durations = durations
-            self.recordLost = recordLost
+            self.undelivered = undelivered
             self.notes = notes
         }
     }
@@ -125,7 +126,7 @@ public struct ThreadBuilder {
         // A live answer sits where it arrived, as the log will put its row: rows logged after it
         // (a later question) come below it, live and after a catch-up alike. One whose text is
         // already logged is settled; it is not shown twice.
-        let loggedAnswers = Set(input.entries.filter(\.isAnswer).map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) })
+        let loggedAnswers = Set(input.entries.filter(\.isAnswer).map { $0.shownText.trimmingCharacters(in: .whitespacesAndNewlines) })
         for p in input.turn.provisional where !loggedAnswers.contains(p.text.trimmingCharacters(in: .whitespacesAndNewlines)) {
             items.append(.provisional(p))
         }
@@ -144,12 +145,15 @@ public struct ThreadBuilder {
         var heardRun: [ThreadRow.Heard.Line] = []
         var heardID = ""
         var lastMineIndex: Int?
-        // `ans:<utt_id>` names the first answer to an utterance, live or logged, so the live bubble
-        // and its log row are one row to the list (no remove and insert of a long bubble).
+        // `ans:<message_ids>` names the first answer of a turn that covered messages, live or
+        // logged, so the live bubble and its log row are one row to the list (no remove and insert
+        // of a long bubble).
         var answerIDs = Set<String>()
-        func answerID(_ utt: String?, fallback: String) -> String {
-            guard let utt, !utt.isEmpty, answerIDs.insert(utt).inserted else { return fallback }
-            return "ans:" + utt
+        func answerID(_ ids: [String]?, fallback: String) -> String {
+            guard let ids, !ids.isEmpty else { return fallback }
+            let key = ids.sorted().joined(separator: ",")
+            guard answerIDs.insert(key).inserted else { return fallback }
+            return "ans:" + key
         }
 
         func flushHeard() {
@@ -176,7 +180,7 @@ public struct ThreadBuilder {
             switch item {
             case .provisional(let p):
                 flushHeard()
-                rows.append(.provisional(p, id: answerID(p.uttID, fallback: "prov:\(p.at.timeIntervalSince1970)")))
+                rows.append(.provisional(p, id: answerID(p.messageIDs, fallback: "prov:\(p.at.timeIntervalSince1970)")))
             case .note(let at, let text):
                 if heardRun.isEmpty { heardID = "note:\(at.timeIntervalSince1970)" }
                 heardRun.append(.init(speaker: nil, text: text))
@@ -193,19 +197,20 @@ public struct ThreadBuilder {
                     // A delivered outbox item still shows as pending until reconcile removes it;
                     // its log row replaces it here, so do not show both.
                     var delivery: String?
-                    if let u = e.utt_id, input.recordLost.contains(u) { delivery = PocketStrings.deliveredNotLogged() }
+                    if let u = e.utt_id, input.undelivered.contains(u) { delivery = PocketStrings.notDelivered() }
                     rows.append(.mine(.init(id: "mine:\(e.key)", text: e.text, at: at, voiceSource: e.voice_source,
                                             durationMs: e.utt_id.flatMap { input.durations[$0] },
                                             attachments: e.attachments ?? [], delivery: delivery)))
                     lastMineIndex = rows.count - 1
                 } else {
                     let files = e.attachments ?? []
-                    let filesOnly = !files.isEmpty && e.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    let filesOnly = !files.isEmpty && e.shownText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     // A row of files was never spoken; 已播报 would be false.
                     let spoken: String? = e.unspoken == true || filesOnly ? nil : (e.truncated == true ? PocketStrings.partlySpoken() : PocketStrings.spoken())
-                    let id = filesOnly ? "duo:\(e.key)" : answerID(e.utt_id, fallback: "duo:\(e.key)")
-                    rows.append(.duoduo(.init(id: id, text: e.text, at: at, spoken: spoken, showTime: true,
-                                              trace: filesOnly ? .empty : input.turn.trace(forAnswer: e.text, uttID: e.utt_id),
+                    let id = filesOnly ? "duo:\(e.key)" : answerID(e.message_ids, fallback: "duo:\(e.key)")
+                    // A truncated row shows the whole answer; its meta says only part was played.
+                    rows.append(.duoduo(.init(id: id, text: e.shownText, at: at, spoken: spoken, showTime: true,
+                                              trace: filesOnly ? .empty : input.turn.trace(forAnswer: e.shownText, messageIDs: e.message_ids),
                                               attachments: files)))
                 }
             }
@@ -214,7 +219,7 @@ public struct ThreadBuilder {
 
         // Pending rows: everything in the outbox whose log row has not arrived.
         let logged = Set(input.entries.compactMap { $0.isTyped ? $0.utt_id : nil })
-        for p in input.outbox where !(p.uttID.map(logged.contains) ?? false) {
+        for p in input.outbox where !logged.contains(p.messageID) {
             rows.append(.pending(p))
         }
         if let w = input.turn.working {
