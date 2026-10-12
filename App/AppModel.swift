@@ -84,6 +84,9 @@ final class AppModel: ObservableObject {
         ConversationStore.shared.onChange = { [weak self] in
             Task { @MainActor in self?.chat = ConversationStore.shared.snapshot() }
         }
+        AmbientController.shared.onReadFailure = { [weak self] f in
+            Task { @MainActor in self?.toast = Self.readFailureText(f) }
+        }
         AmbientController.shared.onChange = { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
@@ -171,6 +174,19 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: derived display state
+
+    /// Why a read aloud did not play in full.
+    static func readFailureText(_ f: ReadAloudFailure) -> String {
+        switch f {
+        case .nothingToSpeak: String(localized: "这条没有能读的文字")
+        case .tooLong: String(localized: "这条太长，读不了")
+        case .synthesisFailed: String(localized: "语音合成失败")
+        case .unavailable: String(localized: "语音服务暂不可用")
+        case .notConnected: String(localized: "连不上多多")
+        case .cut: String(localized: "朗读中断了")
+        case .other(let status, _): String(localized: "朗读失败（\(status)）")
+        }
+    }
 
     /// Why voice is off: the channel and its cerebellum speak different majors, or the service is down.
     var voiceUnavailableText: String {

@@ -20,19 +20,31 @@ import Foundation
 ///   because the channel drops it while muted and the seat lease (`seat_starve_ms`) would expire
 ///   during a long press otherwise.
 ///
-/// Downlink (playback):
+/// Downlink (playback). The connection is a mouth when it was opened with `audio=1`. With ambient
+/// on it holds the capture seat and the room is in live mode: the channel paces speech by this
+/// phone's `played` and takes `interrupted` from it. With ambient off the room is in message
+/// mode: speech arrives as fast as it is synthesized, and the channel takes no report.
 /// 1. Binary frames belong to the latest `speech{speech_id}`; one before any `speech` is dropped.
-/// 2. `played{speech_id, ms}` is a cumulative watermark from playback completion, reported when
-///    it moved by `playedReportMs` and once when the queue drains.
-/// 3. `stop_audio` stops an answer (`c-…`) at once and never reports it again; a filler (`s…`)
-///    plays out. A local 别说了 stops everything and sends `hush`.
-/// 4. Generations: `speech` and `stop_audio` start a new generation; completion callbacks of an
+/// 2. A `speech` declaration names the owner of the packets that follow. It stops nothing: audio
+///    already received belongs to earlier speeches and plays out first, so speeches play in the
+///    order they were declared. It starts a new Opus stream, so the decoder is reset; packets are
+///    decoded as they arrive, so the reset loses no audio.
+/// 3. `played{speech_id, ms}` is a cumulative watermark from playback completion, reported when
+///    it moved by `playedReportMs` and once when the queue drains; only with ambient on.
+/// 4. `stop_audio` naming the current speech, or naming none, clears every buffered speech and
+///    never reports it again; a filler (`s…`) plays out. A local 别说了 stops everything and
+///    sends `hush`.
+/// 5. Generations: `speech` and `stop_audio` start a new generation; completion callbacks of an
 ///    older generation are ignored, so one speech's tail is never credited to the next.
-/// 5. A press stops local playback at once (fillers too) and reports the speech that was playing
-///    with `interrupted{speech_id}`; whether earlier answers are superseded is decided when the
-///    press's message arrives. While a press is held nothing plays: each `speech` that arrives is
-///    dropped, its audio discarded, and reported with the same frame, because the channel waits
-///    for playback reports. The press is app-local; no frame announces it.
+/// 6. A press stops local playback at once (fillers too). With ambient on it reports the speech
+///    that was playing with `interrupted{speech_id}`; whether earlier answers are superseded is
+///    decided when the press's message arrives. While a press is held nothing plays: each
+///    `speech` that arrives is dropped, its audio discarded, and with ambient on reported with
+///    the same frame, because the channel waits for playback reports. The press is app-local; no
+///    frame announces it.
+/// 7. A read aloud (`POST /api/speech`) plays locally, outside the room's speech. Starting one
+///    stops the reply that plays, reported as a press reports it; a press or a `speech`
+///    declaration stops the read, because the live exchange goes first.
 public struct AmbientEdge: Equatable {
     /// Cadence of intermediate `played` reports, the web edge's `PLAYED_REPORT_MS`.
     public static let playedReportMs = 250.0
@@ -52,6 +64,8 @@ public struct AmbientEdge: Equatable {
         /// Stop and drop everything scheduled.
         case clearPlayback
         case resetDecoder
+        /// Stop the local read aloud: cancel its request; its audio is cleared with it.
+        case stopRead
         /// Protocol mismatch the controller must surface and stop on.
         case fatal(String)
         case warn(String)
@@ -76,6 +90,8 @@ public struct AmbientEdge: Equatable {
     public private(set) var speaking = false
     /// A speech dropped during a press: its binary frames are discarded without a warning.
     public private(set) var dropped: String?
+    /// A read aloud is playing (requested and not yet ended or stopped).
+    public private(set) var reading = false
     private var clockID: String?
     private var playedMs = 0.0
     private var lastReported = -1.0
@@ -86,6 +102,9 @@ public struct AmbientEdge: Equatable {
     public var sendsAudio: Bool { helloSent && role != .peer && !userMuted }
     public var muted: Bool { userMuted || pressCount > 0 }
     public var speakingFiller: Bool { speaking && (current?.hasPrefix(Self.fillerPrefix) ?? false) }
+    /// Playback reports (`played`, `interrupted`) go to the channel only from the connection that
+    /// said `hello`: the capture owner in live mode. In message mode the channel takes none.
+    public var reportsPlayback: Bool { helloSent }
 
     // MARK: socket
 
@@ -97,13 +116,14 @@ public struct AmbientEdge: Equatable {
         helloSent = false
     }
 
-    /// The socket closed: stop playback (no `played` can reach the channel anyway).
+    /// The socket closed: stop the room's speech (no `played` can reach the channel anyway). A
+    /// read aloud does not depend on the socket and keeps playing.
     public mutating func socketClosed() -> [Action] {
         conn = nil
         role = nil
         roomState = nil
         helloSent = false
-        return stopSpeech(nil)
+        return reading ? [] : stopSpeech(nil)
     }
 
     /// Capture stopped (ambient off, interruption): the next start must hello again.
@@ -149,13 +169,45 @@ public struct AmbientEdge: Equatable {
         let before = muted
         pressCount += 1
         var out: [Action] = before != muted && helloSent ? [micFrame()] : []
+        out += stopRead()
         if let id = current {
-            out += stopSpeech(nil) + [interrupted(id)]
+            out += stopSpeech(nil) + interrupted(id)
         }
         return out
     }
 
-    private func interrupted(_ id: String) -> Action { .send(["type": "interrupted", "speech_id": id]) }
+    private func interrupted(_ id: String) -> [Action] {
+        reportsPlayback ? [.send(["type": "interrupted", "speech_id": id])] : []
+    }
+
+    // MARK: read aloud
+
+    /// A read aloud starts: stop any earlier read and the reply that plays (reported as a press
+    /// reports it); the rest of that reply's audio is discarded without a warning.
+    public mutating func readBegan() -> [Action] {
+        var out = stopRead()
+        if let id = current {
+            // Reported as a press reports it, played yet or not: the channel waits for this
+            // speech's playback, and its packets are now dropped.
+            dropped = id
+            out += stopSpeech(nil) + interrupted(id)
+        }
+        reading = true
+        return out
+    }
+
+    /// The read played out, failed, or was cancelled by its owner.
+    public mutating func readEnded() { reading = false }
+
+    /// Stops a read in progress (the owner's own reasons: ambient switched, the app left the
+    /// front).
+    public mutating func stopReading() -> [Action] { stopRead() }
+
+    private mutating func stopRead() -> [Action] {
+        guard reading else { return [] }
+        reading = false
+        return [.stopRead, .clearPlayback]
+    }
 
     public mutating func pressEnded() -> [Action] {
         guard pressCount > 0 else { return [] }
@@ -166,7 +218,7 @@ public struct AmbientEdge: Equatable {
 
     /// 别说了: stop everything locally, fillers included, then ask the channel to stop.
     public mutating func hush() -> [Action] {
-        stopSpeech(nil) + [.send(["type": "hush"])]
+        stopRead() + stopSpeech(nil) + [.send(["type": "hush"])]
     }
 
     // MARK: downlink
@@ -198,8 +250,10 @@ public struct AmbientEdge: Equatable {
             if pressCount > 0 {
                 // Nothing plays while a press is held.
                 dropped = id
-                return stopSpeech(nil) + [interrupted(id)]
+                return stopSpeech(nil) + interrupted(id)
             }
+            // The live exchange goes first: a declaration stops a local read.
+            let out = stopRead() + [.resetDecoder]
             dropped = nil
             gen += 1
             pending = 0
@@ -207,8 +261,10 @@ public struct AmbientEdge: Equatable {
             clockID = id
             playedMs = 0
             lastReported = -1
-            return [.resetDecoder]
+            return out
         case "stop_audio":
+            // A read has no room speech under it: the reply it stopped was cleared already.
+            if reading { return [] }
             if let cur = current, cur.hasPrefix(Self.fillerPrefix) { return [] }
             return stopSpeech(f["speech_id"] as? String)
         default:
@@ -250,11 +306,12 @@ public struct AmbientEdge: Equatable {
             }
             speaking = false
         }
-        return out
+        return reportsPlayback ? out : []
     }
 
     private mutating func stopSpeech(_ id: String?) -> [Action] {
-        if let id, let cur = current, id != cur { return [] }
+        // A `stop_audio` naming another speech than the current one is stale.
+        if let id, id != current { return [] }
         gen += 1
         pending = 0
         current = nil

@@ -207,8 +207,15 @@ public enum ChannelPaths {
     public static func messages(room: String) -> String { "/api/messages?room=" + q(room) }
     public static func upload(room: String, name: String) -> String { "/api/upload?room=\(q(room))&name=\(q(name))" }
     /// The room's one `/live` connection; `since` asks for the rows after that cursor first.
-    public static func live(room: String, since: Int? = nil) -> String {
-        "/live?room=" + q(room) + (since.map { "&since=\($0)" } ?? "")
+    /// `audio` is the surface's mouth switch, fixed for the connection's life: with it on, the
+    /// connection receives the room's realtime speech when it is a mouth.
+    public static func live(room: String, since: Int? = nil, audio: Bool) -> String {
+        "/live?room=" + q(room) + (since.map { "&since=\($0)" } ?? "") + "&audio=" + (audio ? "1" : "0")
+    }
+    /// `POST /api/speech`: read a text aloud on request.
+    public static func speech(room: String) -> String { "/api/speech?room=" + q(room) }
+    public static func speechBody(text: String) -> Data {
+        (try? JSONSerialization.data(withJSONObject: ["text": text])) ?? Data()
     }
 
     public static func attachment(room: String, _ a: ChannelAttachment) -> String? {

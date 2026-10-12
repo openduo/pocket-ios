@@ -385,8 +385,12 @@ final class ChannelAPITests: XCTestCase {
     func testPathsEscapeRoom() {
         XCTAssertEqual(ChannelPaths.state(room: "a&b"), "/api/state?room=a%26b")
         XCTAssertEqual(ChannelPaths.messages(room: "a&b"), "/api/messages?room=a%26b")
-        XCTAssertEqual(ChannelPaths.live(room: "a&b"), "/live?room=a%26b")
-        XCTAssertEqual(ChannelPaths.live(room: "r", since: 1_791_000_000_000), "/live?room=r&since=1791000000000")
+        XCTAssertEqual(ChannelPaths.live(room: "a&b", audio: false), "/live?room=a%26b&audio=0")
+        XCTAssertEqual(ChannelPaths.live(room: "r", since: 1_791_000_000_000, audio: true),
+                       "/live?room=r&since=1791000000000&audio=1")
+        XCTAssertEqual(ChannelPaths.speech(room: "a&b"), "/api/speech?room=a%26b")
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: ChannelPaths.speechBody(text: "你好")) as? [String: String],
+                       ["text": "你好"])
         XCTAssertEqual(ChannelPaths.imlog(room: "r", since: 5), "/api/imlog?room=r&since=5")
         XCTAssertEqual(ChannelPaths.typedMessageHeaders(key: "k"), ["Content-Type": "application/json", "Idempotency-Key": "k"])
         XCTAssertEqual(ChannelPaths.attachment(room: "r", ChannelAttachment(name: "报价 v2.pdf", mime: "application/pdf", sha256: "ff")),

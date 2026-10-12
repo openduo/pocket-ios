@@ -55,4 +55,14 @@ enum AudioPreferences {
     /// phone's (false, the default, so AirPods keep A2DP playback).
     static let headsetMicKey = "audio.headsetMic"
     static var headsetMic: Bool { UserDefaults.standard.bool(forKey: headsetMicKey) }
+
+    /// Settings key: the phone plays 多多's replies aloud (default on). It is the `audio` switch of
+    /// the `/live` connection, asked for while the app is in front or ambient mode runs.
+    static let speakRepliesKey = "audio.speakReplies"
+    static var speakReplies: Bool { UserDefaults.standard.object(forKey: speakRepliesKey) as? Bool ?? true }
+
+    /// Settings key: the screen stays on while the app is in front (default off), so the phone
+    /// can stand out as a speaker.
+    static let keepAwakeKey = "screen.keepAwake"
+    static var keepAwake: Bool { UserDefaults.standard.bool(forKey: keepAwakeKey) }
 }

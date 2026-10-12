@@ -38,6 +38,12 @@ struct AmbientSnapshot: Equatable {
 /// `AmbientEdge` state machine. All state lives on `queue`; audio callbacks hop onto it with O(1)
 /// work.
 ///
+/// The phone is a mouth whenever its connection was opened with `audio=1`: replies play here with
+/// ambient off too (the room is then in message mode, and nothing is reported back). The switch
+/// is the 播放语音回复 setting, asked for while the app is in front or ambient mode runs, so no
+/// reply plays from a pocket. A change is a new connection from the cursor. A read aloud
+/// (`POST /api/speech`) plays here as well, outside the room's speech.
+///
 /// The app holds one `/live` connection, owned here. Its conversation frames go to
 /// `PocketEngine`, its audio plane to the edge. Ambient on says `hello` on the open connection;
 /// ambient off closes it, and `PocketEngine` opens a new one without `hello` (a connection cannot
@@ -54,6 +60,17 @@ final class AmbientController: @unchecked Sendable {
     /// `conn` of the open connection (its first `meta`), so ambient mode turned on later can say
     /// `hello` on it.
     private var liveConn: String?
+    /// The `audio` switch the open connection was opened with.
+    private var liveAudio: Bool?
+    /// The read aloud in progress: its request, decoder, framing and blocks not yet played.
+    private var read: StreamRequest?
+    private var readDecoder: OpusVoiceDecoder?
+    private var readStream = PacketStream()
+    private var readQueued = 0
+    private var readBodyEnded = false
+    private var readStarted = false
+    /// Called on the main queue when a read aloud did not play in full.
+    var onReadFailure: ((ReadAloudFailure) -> Void)?
     private var edge = AmbientEdge()
     private var decoder: OpusVoiceDecoder?
     /// Counters of the speech being played; logged on drain and when it ends.
@@ -111,6 +128,8 @@ final class AmbientController: @unchecked Sendable {
             on = true
             interrupted = false
             failure = nil
+            // The ambient engine replaces the playback-only one: a read in progress ends here.
+            stopRead()
             newEdge()
             AppLog.shared.log("ambient_on")
             startAudio()
@@ -134,6 +153,7 @@ final class AmbientController: @unchecked Sendable {
             // The channel's mic switch is a room control that outlives this socket: do not leave
             // the room's mic off for the next edge (`on` = mic on).
             if edge.helloSent, edge.muted { live.send(json: ["type": "mute", "on": true]) }
+            stopRead()
             stopAll()
             publish()
         }
@@ -195,6 +215,7 @@ final class AmbientController: @unchecked Sendable {
     /// Stops capture and closes the connection: a seated connection cannot leave the seat.
     /// `PocketEngine` opens a new one without `hello`.
     private func stopAll() {
+        stopRead()
         VoiceIO.shared.stopAmbient()
         edge.captureStopped()
         liveReplaced()
@@ -206,6 +227,7 @@ final class AmbientController: @unchecked Sendable {
     /// The held connection is gone (closed, replaced): nothing of it carries over.
     private func liveReplaced() {
         liveConn = nil
+        liveAudio = nil
         perform(edge.socketClosed())
     }
 
@@ -214,8 +236,35 @@ final class AmbientController: @unchecked Sendable {
     /// Opens the room's `/live` connection, replacing the held one. Blocking.
     func openLive(_ s: ChannelSettings, since: Int?, timeout: TimeInterval) throws {
         // The old connection's state ends before the new one's first frame can arrive.
-        queue.sync { liveReplaced(); publish() }
-        try live.open(path: ChannelPaths.live(room: s.room, since: since), timeout: timeout)
+        let audio = queue.sync {
+            liveReplaced()
+            publish()
+            liveAudio = wantsAudio
+            return wantsAudio
+        }
+        try live.open(path: ChannelPaths.live(room: s.room, since: since, audio: audio), timeout: timeout)
+    }
+
+    /// The `audio` switch a connection opened now asks for: the setting, while the app is in
+    /// front or ambient mode runs.
+    private var wantsAudio: Bool {
+        AudioPreferences.speakReplies && (on || AppPhase.value != "background")
+    }
+
+    /// Whether the open connection's `audio` switch is still the one wanted. A connection that is
+    /// not is replaced by `PocketEngine` from the cursor.
+    var liveAudioCurrent: Bool { queue.sync { liveAudio == wantsAudio } }
+
+    /// The setting or the foreground changed. A connection opened with the other switch is
+    /// replaced (`PocketEngine` redials it while wanted, else it is closed). In the background
+    /// with ambient off nothing plays: a read stops too.
+    func audioWantChanged(_ reason: String) {
+        queue.async { [self] in
+            if !on, AppPhase.value == "background" { stopRead() }
+            guard liveAudio != nil, liveAudio != wantsAudio else { return }
+            AppLog.shared.log("live_audio_change", ["reason": reason, "audio": wantsAudio])
+            PocketEngine.shared.liveAudioChanged(reason)
+        }
     }
 
     /// Closes the connection (settings changed).
@@ -297,8 +346,9 @@ final class AmbientController: @unchecked Sendable {
     private func text(_ obj: [String: Any]) {
         let type = obj["type"] as? String
         if type == "meta", let c = obj["conn"] as? String { liveConn = c }
-        // Only audio-plane frames matter here; `PocketEngine` handles the conversation.
-        guard on, type == "meta" || type == "audio_params" || type == "speech" || type == "stop_audio" else { return }
+        // Only audio-plane frames matter here; `PocketEngine` handles the conversation. They
+        // matter with ambient off too: an audio-on connection is a mouth in message mode.
+        guard type == "meta" || type == "audio_params" || type == "speech" || type == "stop_audio" else { return }
         let before = (edge.role, edge.roomState)
         if type == "speech" { endStats("replaced") }
         perform(edge.frame(obj))
@@ -314,8 +364,90 @@ final class AmbientController: @unchecked Sendable {
     }
 
     private func binary(_ d: Data) {
-        guard on else { return }
         perform(edge.binary(d))
+    }
+
+    // MARK: read aloud
+
+    /// Reads `text` aloud: `POST /api/speech`, played here as it streams in. It stops the reply
+    /// that plays (with ambient on, reported `interrupted`); a press or a new `speech` stops it.
+    func readAloud(_ text: String) {
+        queue.async { [self] in
+            settings = ChannelSettings.load()
+            tuning = PocketTuning.load()
+            perform(edge.readBegan())
+            let request = StreamRequest { [weak self] owner, data in self?.queue.async { self?.readData(owner, data) } }
+            read = request
+            readDecoder = try? OpusVoiceDecoder()
+            readStream = PacketStream()
+            readQueued = 0
+            readBodyEnded = false
+            readStarted = false
+            AppLog.shared.log("read_aloud", ["chars": text.count])
+            let s = settings, upTimeout = tuning.connectTimeout
+            DispatchQueue.global(qos: .userInitiated).async { [self] in
+                let outcome: Result<(status: Int, body: Data), Error> = Result {
+                    try Tailnet.shared.stream(request, method: "POST", path: ChannelPaths.speech(room: s.room),
+                                              headers: ["Content-Type": "application/json"],
+                                              body: ChannelPaths.speechBody(text: text), upTimeout: upTimeout)
+                }
+                queue.async { [self] in readFinished(request, outcome) }
+            }
+            publish()
+        }
+    }
+
+    private func readData(_ request: StreamRequest, _ data: Data) {
+        // Chunks of a stopped or replaced read are dropped.
+        guard read === request else { return }
+        for packet in readStream.push(data) {
+            guard let samples = try? readDecoder?.decode(packet), !samples.isEmpty else { continue }
+            readStarted = true
+            let request = read
+            if VoiceIO.shared.schedule(samples, done: { [weak self] in
+                self?.queue.async { self?.readBlockPlayed(request) }
+            }) {
+                readQueued += 1
+            }
+        }
+    }
+
+    private func readBlockPlayed(_ request: StreamRequest?) {
+        guard let request, read === request, readQueued > 0 else { return }
+        readQueued -= 1
+        if readBodyEnded, readQueued == 0 { endRead(nil) }
+    }
+
+    private func readFinished(_ request: StreamRequest, _ outcome: Result<(status: Int, body: Data), Error>) {
+        // A read that was stopped or replaced ends without a word.
+        guard read === request else { return }
+        switch outcome {
+        case .failure:
+            endRead(readStarted ? .cut : .notConnected)
+        case .success(let r) where r.status != 200:
+            let error = ((try? JSONSerialization.jsonObject(with: r.body)) as? [String: Any])?["error"] as? String ?? ""
+            endRead(ReadAloudFailure.of(status: r.status, error: error))
+        case .success:
+            readBodyEnded = true
+            if readStream.partial > 0 { return endRead(.cut) }
+            if readQueued == 0 { endRead(nil) }
+        }
+    }
+
+    /// The read ended: played out, or failed (its audio already played stays played).
+    private func endRead(_ failure: ReadAloudFailure?) {
+        read = nil
+        readDecoder = nil
+        edge.readEnded()
+        AppLog.shared.log("read_aloud_end", ["failure": failure.map { "\($0)" } ?? ""])
+        if let failure { DispatchQueue.main.async { self.onReadFailure?(failure) } }
+        publish()
+    }
+
+    /// Stops a read in progress (ambient turned on or off, the app left the front).
+    private func stopRead() {
+        guard edge.reading else { return }
+        perform(edge.stopReading())
     }
 
     private func perform(_ actions: [AmbientEdge.Action]) {
@@ -356,6 +488,11 @@ final class AmbientController: @unchecked Sendable {
                 VoiceIO.shared.clearPlayback()
             case .resetDecoder:
                 decoder = try? OpusVoiceDecoder()
+            case .stopRead:
+                read?.cancel()
+                read = nil
+                readDecoder = nil
+                AppLog.shared.log("read_aloud_stopped")
             case .fatal(let why):
                 AppLog.shared.log("ambient_fatal", ["why": why])
                 failure = why

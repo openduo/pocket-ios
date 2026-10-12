@@ -51,6 +51,9 @@ final class PocketEngine: @unchecked Sendable {
     private var awaiting = false
     private var waitStarted = 0.0
     private var liveBusy = false
+    /// A check was asked for while one ran: run another when it ends, so a request made after
+    /// the running check read its inputs is not lost.
+    private var liveRecheck: String?
     /// The connection was opened with a cursor: rows before `ready` are its replay, and `ready`
     /// settles what the app still waits on.
     private var liveReplays = false
@@ -131,6 +134,15 @@ final class PocketEngine: @unchecked Sendable {
             Tailnet.shared.closeIdle()
             ensureLiveOnQueue("foreground")
             link.retryStaleBond()
+        }
+    }
+
+    /// The `audio` switch wanted for `/live` changed (setting, foreground): replace the connection
+    /// while it is wanted; otherwise close it, so nothing plays in the background.
+    func liveAudioChanged(_ reason: String) {
+        queue.async { [self] in
+            if wantLive { return ensureLiveOnQueue(reason) }
+            DispatchQueue.global(qos: .userInitiated).async { AmbientController.shared.closeLive() }
         }
     }
 
@@ -521,14 +533,16 @@ final class PocketEngine: @unchecked Sendable {
     /// Makes sure the `/live` connection is live (a stale one is replaced, from the stored
     /// cursor), then refreshes the room's state.
     private func ensureLiveOnQueue(_ reason: String) {
-        guard settings.isComplete, !liveBusy else { return }
+        guard settings.isComplete else { return }
+        guard !liveBusy else { liveRecheck = reason; return }
         liveBusy = true
         let s = settings, tuning = tuning
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             let t0 = CPUClock.uptime()
             var opened = false
             var failure: String?
-            if !(live.isOpen && live.ping(timeout: tuning.pingTimeout)) {
+            // A connection opened with the other `audio` switch is replaced too.
+            if !(live.isOpen && AmbientController.shared.liveAudioCurrent && live.ping(timeout: tuning.pingTimeout)) {
                 let since = ConversationStore.shared.cursor()
                 queue.sync {
                     liveGeneration += 1
@@ -554,6 +568,10 @@ final class PocketEngine: @unchecked Sendable {
             if failure != nil { ConversationStore.shared.connectFailed() }
             queue.async { [self] in
                 liveBusy = false
+                if let again = liveRecheck {
+                    liveRecheck = nil
+                    if wantLive { ensureLiveOnQueue(again) }
+                }
                 AppLog.shared.log("live", ["reason": reason, "opened": opened, "err": failure ?? "",
                                            "ms": Int((CPUClock.uptime() - t0) * 1000), "app": AppPhase.value])
                 setReachable(failure == nil)

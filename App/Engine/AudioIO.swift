@@ -11,6 +11,10 @@ import PocketOpus
 /// uplink), each of which owns its Opus encoder. Ambient playback runs through an `AVAudioPlayerNode` on the same engine so
 /// the voice-processing unit has the played signal as its echo reference.
 ///
+/// Playback without capture (replies with ambient off, a read aloud) starts a playback-only
+/// engine at the first scheduled block, in a spoken-audio session that ducks other audio, and
+/// stops it when everything scheduled has played: the microphone is never touched for it.
+///
 /// Per tap buffer the work is one conversion, one O(n) RMS and the consumers' encode + append.
 /// Nothing here touches UI; the level meter is a value the UI samples while visible.
 final class VoiceIO: @unchecked Sendable {
@@ -46,6 +50,12 @@ final class VoiceIO: @unchecked Sendable {
     /// `hello`.
     private(set) var voiceProcessing = false
     private(set) var ambientMode = false
+    /// The running engine has no input: it was started only to play.
+    private var playbackOnly = false
+    /// Blocks scheduled and not yet played, and the generation they were scheduled in;
+    /// `clearPlayback` starts a new generation, so the cleared blocks' callbacks count nothing.
+    private var queued = 0
+    private var playGen = 0
     /// Called after a media services reset; the owner rebuilds everything.
     var onRebuildNeeded: ((String) -> Void)?
     /// Called after the engine recovered from a configuration change (route change): voice
@@ -134,6 +144,37 @@ final class VoiceIO: @unchecked Sendable {
         }
     }
 
+    /// Playback only: spoken audio that ducks other apps' audio while it plays (`.duckOthers`
+    /// implies mixing); deactivation when it ends lifts the ducking.
+    private func configurePlaybackSession() throws {
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+            try session.setActive(true)
+        } catch {
+            throw Failure.engine("session: \(error.localizedDescription)")
+        }
+    }
+
+    /// A player-only graph: no input node, so no microphone.
+    private func buildPlaybackEngine() throws {
+        let e = AVAudioEngine()
+        let p = AVAudioPlayerNode()
+        e.attach(p)
+        e.connect(p, to: e.mainMixerNode, format: playFormat)
+        e.prepare()
+        NotificationCenter.default.addObserver(self, selector: #selector(configChanged(_:)),
+                                               name: .AVAudioEngineConfigurationChange, object: e)
+        lock.lock()
+        engine = e
+        player = p
+        converter = nil
+        voiceProcessing = false
+        ambientMode = false
+        playbackOnly = true
+        lock.unlock()
+    }
+
     /// Builds the graph (input tap, player) without starting it.
     private func buildEngine(ambient: Bool) throws {
         let e = AVAudioEngine()
@@ -169,13 +210,14 @@ final class VoiceIO: @unchecked Sendable {
         converter = conv
         voiceProcessing = vp
         ambientMode = ambient
+        playbackOnly = false
         lock.unlock()
     }
 
     /// Starts the built engine. On failure the engine is discarded.
     private func startBuilt() throws {
         lock.lock()
-        let e = engine, p = player, ambient = ambientMode, vp = voiceProcessing
+        let e = engine, p = player, ambient = ambientMode, vp = voiceProcessing, playOnly = playbackOnly
         lock.unlock()
         guard let e else { throw Failure.engine("no engine") }
         do {
@@ -186,6 +228,10 @@ final class VoiceIO: @unchecked Sendable {
             throw Failure.engine(error.localizedDescription)
         }
         p?.play()
+        if playOnly {
+            AppLog.shared.log("audio_start", ["playback_only": true, "route": Self.routeName])
+            return
+        }
         let format = e.inputNode.outputFormat(forBus: 0)
         AppLog.shared.log("audio_start", ["ambient": ambient, "vp": vp, "in_rate": format.sampleRate,
                                           "in_ch": format.channelCount, "route": Self.routeName,
@@ -198,7 +244,7 @@ final class VoiceIO: @unchecked Sendable {
         lock.lock()
         let current = engine
         let running = current?.isRunning == true
-        let sameMode = current != nil && ambientMode == ambient
+        let sameMode = current != nil && ambientMode == ambient && !playbackOnly
         lock.unlock()
         if running, sameMode {
             HoldTiming.shared.note("engine", "running")
@@ -229,9 +275,20 @@ final class VoiceIO: @unchecked Sendable {
     @objc private func configChanged(_ n: Notification) {
         configQueue.async { [self] in
             lock.lock()
-            let e = engine, p = player, conv = converter
+            let e = engine, p = player, conv = converter, playOnly = playbackOnly
             lock.unlock()
             guard let e, (n.object as? AVAudioEngine) === e else { return }
+            if playOnly {
+                // No input to re-tap; only a stopped engine is restarted.
+                if !e.isRunning {
+                    if let p { e.connect(p, to: e.mainMixerNode, format: playFormat) }
+                    do { try e.start(); p?.play() } catch {
+                        AppLog.shared.log("audio_restart_error", ["err": error.localizedDescription])
+                    }
+                }
+                AppLog.shared.log("audio_config_change", ["route": Self.routeName, "playback_only": true])
+                return
+            }
             let input = e.inputNode
             let format = input.outputFormat(forBus: 0)
             var retapped = false
@@ -264,17 +321,22 @@ final class VoiceIO: @unchecked Sendable {
 
     private func stopEngine() {
         lock.lock()
-        let e = engine, p = player
+        let e = engine, p = player, playOnly = playbackOnly
         engine = nil
         player = nil
         converter = nil
         voiceProcessing = false
+        playbackOnly = false
         levelBits = 0
+        // The player's blocks go with it.
+        queued = 0
+        playGen += 1
         lock.unlock()
         guard let e else { return }
         NotificationCenter.default.removeObserver(self, name: .AVAudioEngineConfigurationChange, object: e)
         p?.stop()
-        e.inputNode.removeTap(onBus: 0)
+        // A playback-only engine has no input node; asking for one would create it.
+        if !playOnly { e.inputNode.removeTap(onBus: 0) }
         e.stop()
     }
 
@@ -282,7 +344,7 @@ final class VoiceIO: @unchecked Sendable {
     /// what lifts the ducking of other audio).
     private func stopIfIdle() {
         lock.lock()
-        let idle = noteEncoder == nil && ambientSink == nil
+        let idle = noteEncoder == nil && ambientSink == nil && queued == 0
         lock.unlock()
         guard idle else { return }
         stopEngine()
@@ -430,28 +492,71 @@ final class VoiceIO: @unchecked Sendable {
     // MARK: playback
 
     /// Schedules 16 kHz samples; `done` runs when they have been played (not when scheduled).
+    /// With no engine running (ambient off, no hold) a playback-only engine starts first.
+    /// Runs on `configQueue`, so an idle stop never falls between finding the player and
+    /// scheduling on it.
     func schedule(_ samples: [Int16], done: @escaping () -> Void) -> Bool {
+        configQueue.sync { scheduleOnConfig(samples, done: done) }
+    }
+
+    private func scheduleOnConfig(_ samples: [Int16], done: @escaping () -> Void) -> Bool {
         lock.lock()
-        let p = player
+        var p = player
         lock.unlock()
+        if p == nil {
+            do {
+                try configurePlaybackSession()
+                try buildPlaybackEngine()
+                try startBuilt()
+            } catch {
+                AppLog.shared.log("audio_playback_error", ["err": "\(error)"])
+                // Lift the ducking the session started with.
+                stopEngine()
+                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+                return false
+            }
+            lock.lock(); p = player; lock.unlock()
+        }
         guard let p, let buf = AVAudioPCMBuffer(pcmFormat: playFormat, frameCapacity: AVAudioFrameCount(samples.count)) else {
             return false
         }
         buf.frameLength = AVAudioFrameCount(samples.count)
         let dst = buf.floatChannelData![0]
         for i in 0..<samples.count { dst[i] = Float(samples[i]) / 32768 }
-        p.scheduleBuffer(buf, completionCallbackType: .dataPlayedBack) { _ in done() }
+        lock.lock()
+        queued += 1
+        let gen = playGen
+        lock.unlock()
+        p.scheduleBuffer(buf, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            done()
+            self?.blockPlayed(gen: gen)
+        }
         return true
     }
 
+    /// One block played (or was dropped by a stop). An engine no consumer holds ends with its last
+    /// block: a reply that landed on a hold's engine must not keep it, and its microphone, running.
+    private func blockPlayed(gen: Int) {
+        lock.lock()
+        guard gen == playGen, queued > 0 else { lock.unlock(); return }
+        queued -= 1
+        let drained = queued == 0
+        lock.unlock()
+        // Every engine kind: `stopIfIdle` keeps one a consumer still needs (a hold, ambient).
+        if drained { configQueue.async { [self] in stopIfIdle() } }
+    }
+
     /// Drops everything scheduled. Completion callbacks of the dropped buffers still fire; the
-    /// edge machine ignores them by generation.
+    /// edge machine ignores them by generation, and so does the count of queued blocks.
     func clearPlayback() {
         lock.lock()
         let p = player
+        queued = 0
+        playGen += 1
         lock.unlock()
         guard let p else { return }
         p.stop()
         p.play()
+        configQueue.async { [self] in stopIfIdle() }
     }
 }

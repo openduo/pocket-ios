@@ -9,6 +9,12 @@
 // replays the rows after it before `ready`, and /api/imlog?since= returns them without a socket.
 // No /api/upload.
 //
+// Speech: the mock has no synthesis; it speaks with the packets of the last voice message it
+// received. It has no capture seat, so every socket opened with `audio=1` is a mouth (message
+// mode): each answer is declared with `speech` and its packets follow unpaced, and the row says
+// spoken. POST /api/speech returns the same packets in the voice message framing (422
+// nothing_to_speak for a blank text, 503 cerebellum_unavailable before any voice message).
+//
 //	go run . -listen <tailnet-ip>:38199 [-answer-delay 3s] [-no-answer] [-upload-max 0]
 //
 // Then set the app's host to that address, port 38199, HTTPS off.
@@ -49,7 +55,8 @@ var (
 	receipts = map[string][]byte{} // Idempotency-Key -> first 202 body
 	imlog    []entry
 	lastSeq  int64
-	sockets  = map[*websocket.Conn]bool{}
+	sockets  = map[*websocket.Conn]bool{} // value: opened with audio=1 (a mouth)
+	voice    [][]byte                     // packets of the last voice message: the mock's "speech"
 	delay    = flag.Duration("answer-delay", 3*time.Second, "time from transcript to answer_final")
 	noAnswer = flag.Bool("no-answer", false, "end each turn with turn idle and no answer (docs/ble-protocol.md §9)")
 	// uploadMax is published as limits.upload_max_bytes; 0 publishes null (uploads off).
@@ -64,6 +71,7 @@ func main() {
 		writeJSON(w, 200, map[string]any{"ok": true, "mock": true})
 	})
 	http.HandleFunc("/api/messages", message)
+	http.HandleFunc("/api/speech", speech)
 	gone := func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 410, map[string]string{"error": "update_required", "replacement": "/api/messages"})
 	}
@@ -185,6 +193,9 @@ func message(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		accept(w, key)
+		mu.Lock()
+		voice = split(body)
+		mu.Unlock()
 		log.Printf("voice %s source=%s packets=%d bytes=%d", key, src, n, bytes)
 		text := fmt.Sprintf("(mock %s) %d packets, %.1f s", src, n, float64(n)*0.02)
 		go func() {
@@ -225,6 +236,88 @@ func packets(body []byte) (n, bytes int, ok bool) {
 	return n, bytes, true
 }
 
+// split returns the packets of a well-formed `[u16 LE length][opus packet]` body.
+func split(body []byte) [][]byte {
+	var out [][]byte
+	for off := 0; off+2 <= len(body); {
+		l := int(binary.LittleEndian.Uint16(body[off:]))
+		if off+2+l > len(body) {
+			break
+		}
+		out = append(out, body[off+2:off+2+l])
+		off += 2 + l
+	}
+	return out
+}
+
+// frame encodes packets in the voice message framing.
+func frame(packets [][]byte) []byte {
+	var out []byte
+	for _, p := range packets {
+		out = binary.LittleEndian.AppendUint16(out, uint16(len(p)))
+		out = append(out, p...)
+	}
+	return out
+}
+
+// speech is POST /api/speech: a read aloud, answered with the last voice message's packets.
+func speech(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeJSON(w, 405, map[string]string{"error": "method_not_allowed"})
+		return
+	}
+	if r.Header.Get("Content-Type") != "application/json" {
+		writeJSON(w, 415, map[string]string{"error": "unsupported_media_type"})
+		return
+	}
+	var m struct {
+		Text *string `json:"text"`
+	}
+	if b, _ := io.ReadAll(r.Body); json.Unmarshal(b, &m) != nil || m.Text == nil {
+		writeJSON(w, 400, map[string]string{"error": "bad_body"})
+		return
+	}
+	if strings.TrimSpace(*m.Text) == "" {
+		writeJSON(w, 422, map[string]string{"error": "nothing_to_speak"})
+		return
+	}
+	mu.Lock()
+	packets := voice
+	mu.Unlock()
+	if len(packets) == 0 {
+		writeJSON(w, 503, map[string]string{"error": "cerebellum_unavailable"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.ambient.opus-packets")
+	w.WriteHeader(200)
+	w.Write(frame(packets))
+	log.Printf("read aloud: %d packets", len(packets))
+}
+
+// speak declares the speech to every mouth and writes its packets unpaced. Returns whether any
+// mouth received it.
+func speak(id string) bool {
+	mu.Lock()
+	defer mu.Unlock()
+	if len(voice) == 0 {
+		return false
+	}
+	spoke := false
+	for c, mouth := range sockets {
+		if !mouth {
+			continue
+		}
+		send(c, map[string]any{"type": "speech", "speech_id": id})
+		for _, p := range voice {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			c.Write(ctx, websocket.MessageBinary, p)
+			cancel()
+		}
+		spoke = true
+	}
+	return spoke
+}
+
 // answer plays one brain turn for the message: received, thinking, a tool call, a partial
 // answer, the answer and its row, then turn idle (docs/ble-protocol.md §9).
 func answer(id, text string) {
@@ -245,7 +338,8 @@ func answer(id, text string) {
 	broadcast(map[string]any{"type": "duoduo_said", "speech_id": speech, "text": string([]rune(text)[:len([]rune(text))/2]), "kind": "answer"})
 	time.Sleep(*delay / 2)
 	broadcast(map[string]any{"type": "answer_final", "speech_id": speech, "message_ids": ids, "text": text})
-	appendRow(entry{Kind: "answer", Speaker: "多多", Text: text, MessageIDs: ids, Unspoken: true})
+	spoke := speak(speech)
+	appendRow(entry{Kind: "answer", Speaker: "多多", Text: text, MessageIDs: ids, Unspoken: !spoke})
 	log.Printf("answer_final %s", speech)
 	turn("idle")
 }
@@ -265,15 +359,24 @@ func broadcast(v any) {
 	}
 }
 
-// live is the /live connection: meta, the rows after `since` (when given), ready, then live
-// events. The mock has no capture seat; a hello is ignored.
+// live is the /live connection: meta, audio_params (audio=1 only), the rows after `since` (when
+// given), ready, then live events. The mock has no capture seat; a hello is ignored. An `audio`
+// value other than absent, 0 or 1 is refused with 1008.
 func live(w http.ResponseWriter, r *http.Request) {
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
 		return
 	}
+	audio := r.URL.Query().Get("audio")
+	if audio != "" && audio != "0" && audio != "1" {
+		c.Close(websocket.StatusPolicyViolation, "bad audio")
+		return
+	}
 	mu.Lock()
 	send(c, map[string]any{"type": "meta", "conn": fmt.Sprintf("mock-%d", time.Now().UnixNano())})
+	if audio == "1" {
+		send(c, map[string]any{"type": "audio_params", "rate": 16000, "frame_ms": 20})
+	}
 	if s := r.URL.Query().Get("since"); s != "" {
 		if since, err := strconv.ParseInt(s, 10, 64); err == nil {
 			for _, e := range rowsAfter(since) {
@@ -282,10 +385,10 @@ func live(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	send(c, map[string]any{"type": "ready", "seq": lastSeq, "turn": nil, "messages": []any{}, "api": 1})
-	sockets[c] = true
+	sockets[c] = audio == "1"
 	n := len(sockets)
 	mu.Unlock()
-	log.Printf("live socket open (%d)", n)
+	log.Printf("live socket open (%d) audio=%q", n, audio)
 	for {
 		if _, _, err := c.Read(context.Background()); err != nil {
 			break

@@ -278,6 +278,10 @@ struct DuoduoBubble: View {
                             model.voiceInput = false
                             model.quote = text
                         } label: { Label(String(localized: "回复"), systemImage: "arrowshape.turn.up.left") }
+                        // Reads the text this bubble shows; the channel strips its markdown.
+                        Button { AmbientController.shared.readAloud(text) } label: {
+                            Label(String(localized: "朗读"), systemImage: "speaker.wave.2")
+                        }
                         Button { UIPasteboard.general.string = text } label: { Label(String(localized: "拷贝"), systemImage: "doc.on.doc") }
                         ShareLink(item: text) { Label(String(localized: "分享"), systemImage: "square.and.arrow.up") }
                     }

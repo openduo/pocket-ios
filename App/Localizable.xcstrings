@@ -355,6 +355,16 @@
         }
       }
     },
+    "保持屏幕常亮": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep screen on"
+          }
+        }
+      }
+    },
     "充电": {
       "localizations": {
         "en": {
@@ -1537,6 +1547,26 @@
         }
       }
     },
+    "播放语音回复": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Play spoken replies"
+          }
+        }
+      }
+    },
+    "播放语音回复：App 在前台或环境模式开着时，多多的回复在这台手机上读出来；家里有设备在听时由那台设备播放。保持屏幕常亮：App 在前台时屏幕不自动锁定，手机可以放着当音箱用。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Play spoken replies: while the app is open or ambient mode is on, DuoDuo's replies are spoken on this phone; when a device at home is listening, that device speaks them. Keep screen on: while the app is open the screen does not lock, so the phone can stand as a speaker."
+          }
+        }
+      }
+    },
     "收到了": {
       "localizations": {
         "en": {
@@ -1643,6 +1673,36 @@
           "stringUnit": {
             "state": "translated",
             "value": "Last press %@"
+          }
+        }
+      }
+    },
+    "朗读": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Read aloud"
+          }
+        }
+      }
+    },
+    "朗读中断了": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reading aloud was cut off"
+          }
+        }
+      }
+    },
+    "朗读失败（%lld）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reading aloud failed (%lld)"
           }
         }
       }
@@ -2447,6 +2507,16 @@
         }
       }
     },
+    "语音合成失败": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Speech synthesis failed"
+          }
+        }
+      }
+    },
     "语音服务暂不可用": {
       "localizations": {
         "en": {
@@ -2553,6 +2623,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Rooms on this channel:"
+          }
+        }
+      }
+    },
+    "这条太长，读不了": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This message is too long to read aloud"
+          }
+        }
+      }
+    },
+    "这条没有能读的文字": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing in this message can be read aloud"
           }
         }
       }

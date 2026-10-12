@@ -22,8 +22,10 @@ final class TryChannel: @unchecked Sendable {
     private var lastSeq = 0
     private var greeted = false
     private weak var live: LiveSocket?
-    /// The app said `hello` on the socket: it holds the seat and plays speech.
+    /// The app said `hello` on the socket: it holds the seat.
     private var listening = false
+    /// The socket was opened with `audio=1`: it is a mouth, with or without the seat.
+    private var audio = false
 
     /// Pacing of a scripted turn, so the thinking and tool steps can be seen. Display only:
     /// a real turn's timing comes from the brain.
@@ -38,6 +40,7 @@ final class TryChannel: @unchecked Sendable {
             lastSeq = 0
             greeted = false
             listening = false
+            audio = false
         }
     }
 
@@ -66,6 +69,8 @@ final class TryChannel: @unchecked Sendable {
             return json(200, ["room": TryMode.room, "date": date, "entries": encode(rows)])
         case ("POST", "/api/messages"):
             return message(headers: headers, body: body)
+        case ("POST", "/api/speech"):
+            return readAloud(body)
         case ("POST", "/api/upload"):
             let name = query["name"] ?? "file"
             let mime = headers["Content-Type"] ?? "application/octet-stream"
@@ -81,6 +86,21 @@ final class TryChannel: @unchecked Sendable {
     }
 
     private var roomName: String { TryScript.en ? "Try it" : "体验" }
+
+    /// `POST /api/speech`: the scripted answer's bundled clip, in the voice message framing. A
+    /// text with no clip has nothing here to synthesize it.
+    private func readAloud(_ body: Data) -> (status: Int, body: Data) {
+        guard let o = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any], let text = o["text"] as? String else {
+            return json(400, ["error": "bad_body"])
+        }
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return json(422, ["error": "nothing_to_speak"]) }
+        let clips = TryScript.turns.map { ($0.text, $0.audio) } + [TryScript.ambientHello]
+        guard let clip = clips.first(where: { $0.0 == text })?.1, let packets = Self.packets(clip),
+              let framed = try? VoiceNote(source: .phone, packets: packets).body() else {
+            return json(503, ["error": "cerebellum_unavailable"])
+        }
+        return (200, framed)
+    }
 
     /// `POST /api/messages`: typed JSON or a voice note (length-prefixed Opus packets), keyed by
     /// `Idempotency-Key`. 202 at once; the row, the cleaned text and the answer follow on `/live`.
@@ -206,12 +226,15 @@ final class TryChannel: @unchecked Sendable {
     /// The app opened `/live` (`since` when it holds a cursor): `meta`, the rows after the
     /// cursor, then `ready`.
     func openLive(_ s: LiveSocket, path: String) {
-        let since = URLComponents(string: path)?.queryItems?.first { $0.name == "since" }?.value.flatMap(Int.init)
+        let items = URLComponents(string: path)?.queryItems ?? []
+        let since = items.first { $0.name == "since" }?.value.flatMap(Int.init)
+        let audioParam = items.first { $0.name == "audio" }?.value
         queue.async { [self] in
             live = s
             listening = false
+            audio = audioParam == "1"
             frame(["type": "meta", "conn": "try-live"])
-            frame(["type": "audio_params", "rate": AmbientEdge.rate])
+            if audio { frame(["type": "audio_params", "rate": AmbientEdge.rate]) }
             if let since {
                 for e in log where (e.seq ?? 0) > since {
                     frame(["type": "row", "seq": e.seq ?? 0, "row": encode([e]).first ?? [:]])
@@ -222,7 +245,7 @@ final class TryChannel: @unchecked Sendable {
         }
     }
 
-    func closeLive(_ s: LiveSocket) { queue.sync { if live === s { live = nil; listening = false } } }
+    func closeLive(_ s: LiveSocket) { queue.sync { if live === s { live = nil; listening = false; audio = false } } }
     func liveOpen(_ s: LiveSocket) -> Bool { queue.sync { live === s } }
 
     /// A text frame from the app.
@@ -253,11 +276,10 @@ final class TryChannel: @unchecked Sendable {
     }
 
     /// Declares the speech and sends the bundled clip as 20 ms Opus packets, as the channel does
-    /// for TTS. Only when ambient mode is listening; a typed chat is not read aloud.
-    /// Returns whether it was spoken.
+    /// for TTS. Only to a mouth (`audio=1`), with ambient on or off. Returns whether it was spoken.
     @discardableResult
-    private func speak(id: String, audio: String) -> Bool {
-        guard listening, let live, let packets = Self.packets(audio) else { return false }
+    private func speak(id: String, audio clip: String) -> Bool {
+        guard audio, let live, let packets = Self.packets(clip) else { return false }
         frame(["type": "speech", "speech_id": id])
         for p in packets { live.onBinary?(p) }
         return true

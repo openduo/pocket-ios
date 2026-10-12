@@ -55,6 +55,8 @@ struct PocketApp: App {
             AppLog.shared.log("scene_phase", ["phase": name])
             model.setActive(p == .active)
             if p == .active { PocketEngine.shared.appBecameActive() }
+            if p == .active || p == .background { AmbientController.shared.audioWantChanged(name) }
+            if p == .active { UIApplication.shared.isIdleTimerDisabled = AudioPreferences.keepAwake }
             if p == .background, !AmbientPolicy.continuesInBackground { AmbientController.shared.turnOff() }
             if p == .background { AnswerRefresh.schedule() }
         }

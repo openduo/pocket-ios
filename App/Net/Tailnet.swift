@@ -94,6 +94,80 @@ final class Tailnet: @unchecked Sendable {
     }
 }
 
+extension Tailnet {
+    /// One streamed request (a read aloud). Blocks until the body ends, breaks or is cancelled;
+    /// the 200 body goes to `request` as it arrives. Throws `TransportFailure` when no response
+    /// arrived or the body broke.
+    func stream(_ request: StreamRequest, method: String, path: String, headers: [String: String], body: Data,
+                upTimeout: TimeInterval) throws -> (status: Int, body: Data) {
+        if TryMode.active {
+            let (status, data) = TryChannel.shared.request(method: method, path: path, headers: headers, body: body)
+            guard status == 200 else { return (status, data) }
+            request.onStreamData(data)
+            return (status, Data())
+        }
+        try up(timeout: upTimeout)
+        let hdr = String(decoding: try JSONSerialization.data(withJSONObject: headers), as: UTF8.self)
+        // A request cancelled while tsnet came up is never sent.
+        guard request.begin() else { throw TransportFailure.network("cancelled") }
+        defer { request.end() }
+        var err: NSError?
+        let res = TsbridgeStream(request.id, method, path, hdr, body, request, &err)
+        if let err { throw TransportFailure.network(err.localizedDescription) }
+        guard let res else { throw TransportFailure.network("no response") }
+        return (res.status, res.body ?? Data())
+    }
+}
+
+/// The receiver of one streamed response body; `cancel()` ends the request, or keeps it from
+/// being sent when it has not started.
+final class StreamRequest: NSObject, TsbridgeStreamHandlerProtocol, @unchecked Sendable {
+    private static let idLock = NSLock()
+    private static var last: Int64 = 0
+
+    let id: Int64
+    private let onData: (StreamRequest, Data) -> Void
+    private let lock = NSLock()
+    private enum State { case idle, running, cancelled, done }
+    private var state = State.idle
+
+    /// `onData` gets each chunk with the request it belongs to.
+    init(onData: @escaping (StreamRequest, Data) -> Void) {
+        Self.idLock.lock()
+        Self.last += 1
+        id = Self.last
+        Self.idLock.unlock()
+        self.onData = onData
+    }
+
+    /// Marks the request as sent; false when it was cancelled first.
+    func begin() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard state == .idle else { return false }
+        state = .running
+        return true
+    }
+
+    func end() {
+        lock.lock(); state = .done; lock.unlock()
+    }
+
+    func cancel() {
+        lock.lock()
+        let running = state == .running
+        if state == .idle || running { state = .cancelled }
+        lock.unlock()
+        // Go is told only about a request it may hold; see `StreamCancel`.
+        if running, !TryMode.active { TsbridgeStreamCancel(id) }
+    }
+
+    /// The bytes are Go heap memory, valid only during this call (see `LiveSocket.onLiveBinary`).
+    func onStreamData(_ data: Data?) {
+        guard let data else { return }
+        onData(self, Data([UInt8](data)))
+    }
+}
+
 /// `ChannelTransport` over tsnet.
 struct TsnetTransport: ChannelTransport {
     let tuning: PocketTuning
