@@ -149,6 +149,9 @@ final class AmbientController: @unchecked Sendable {
         queue.async { [self] in
             guard on else { return }
             on = false
+            // Interruptions are tracked while ambient runs only; the reopened connection asks
+            // for the setting again.
+            interrupted = false
             AppLog.shared.log("ambient_off")
             // The channel's mic switch is a room control that outlives this socket: do not leave
             // the room's mic off for the next edge (`on` = mic on).
@@ -246,9 +249,10 @@ final class AmbientController: @unchecked Sendable {
     }
 
     /// The `audio` switch a connection opened now asks for: the setting, while the app is in
-    /// front or ambient mode runs.
+    /// front or ambient mode runs. Not while the audio session is interrupted: the phone cannot
+    /// play during a call, so it must not count as a mouth.
     private var wantsAudio: Bool {
-        AudioPreferences.speakReplies && (on || AppPhase.value != "background")
+        AudioPreferences.speakReplies && !interrupted && (on || AppPhase.value != "background")
     }
 
     /// Whether the open connection's `audio` switch is still the one wanted. A connection that is
@@ -313,6 +317,12 @@ final class AmbientController: @unchecked Sendable {
             AppLog.shared.log("ambient_interruption_ended", ["resume": resume])
             guard interrupted, resume else { break }
             interrupted = false
+            // The connection opened during the interruption asked `audio=0`: replace it before
+            // the new edge says `hello` on it.
+            if liveAudio != nil, liveAudio != wantsAudio {
+                liveReplaced()
+                live.close()
+            }
             newEdge()
             startAudio()
             PocketEngine.shared.ensureLive("ambient_resume")
