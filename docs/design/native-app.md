@@ -111,7 +111,7 @@ Bluetooth on step 3 or the first Passport action; Photos/Camera on first use.
 |---|---|---|
 | Empty | connected, history empty | Dog `listening`, "我在，随时说", three cards: hold to talk, ambient mode, add Passport (screens `empty`) |
 | Connecting | launch, foreground, settings change | Cached thread at once; nav subtitle 连接中…; no banner for the first 2 s (Q9) |
-| Connected | display socket open and `/api/state` 200 | Nav subtitle 在线 |
+| Connected | `/live` socket open and `/api/state` 200 | Nav subtitle 在线 |
 | Offline | socket cannot be restored, request fails | Attention banner "连不上多多 · 显示 HH:MM 缓存的记录" + 重试; nav subtitle 连不上 · 正在重试; sends are queued (Q5) (screens `offline`) |
 | Tailnet login needed | `backend_state == NeedsLogin` | Banner "需要重新登录 Tailscale" + 登录; nothing else changes |
 | 多多 cannot reply | `/api/state.daemon_ok == false` | Banner "多多暂时无法回复，消息会先记下"; sending still allowed |
@@ -120,32 +120,35 @@ Bluetooth on step 3 or the first Passport action; Photos/Camera on first use.
 
 ### 4.3 Thread rows
 
-Built from `imlog` entries (server authority) plus local rows that have not yet appeared there.
+Built from room-log rows (server authority, keyed by `seq`) plus local rows that have not yet
+appeared there.
 
 | Entry | Row |
 |---|---|
 | `kind: "typed"`, no `voice_source` | my text bubble (+ attachments above it) |
-| `kind: "typed"`, `voice_source: "phone"` | my voice bubble: head "语音 · 0:06", transcript as text |
+| `kind: "typed"`, `voice_source: "phone"` | my voice bubble: head "语音 · 0:06", the text the brain received |
 | `kind: "typed"`, `voice_source: "passport"` | my voice bubble with Passport glyph |
-| `kind: "answer"` / speaker `多多` | 多多's bubble; spoken rows get "已播报", `truncated` gets "只播了一部分", `unspoken` gets nothing |
+| `kind: "answer"` / speaker `多多` | 多多's bubble; spoken rows get "已播报", `truncated` shows `full_text` (the whole answer) with "只播了一部分", `unspoken` gets nothing |
 | speaker `多多`, empty `text`, `attachments` | files 多多 sent (outbox `payload.attachments`, filed by the channel): images inline, files as cards, no spoken meta; never a Passport reply |
 | `kind: "reaction"` | not shown in the thread (fillers like 「我看看」) |
 | `kind: "human"` (ambient room speech) | compact "heard" row: speaker chip `V1` + text, not a bubble; runs of more than 3 fold into "房间里还说了 N 句" (Q6) |
 | `understood addressed:false` / `wake_ignored` / `ack_silenced` | folded note "听到了，不是在叫我" inside the heard fold |
-| `record_unavailable` for my `utt_id` | meta under my bubble "已送达，记录未保存" |
+| `message failed(brain_unreachable)` for my message (live) | meta under my bubble "没送到多多"; the row stays (the record is append-only) |
 
 - Date separators per day; time stamps when more than 10 min pass between rows (display only).
-- Delivery meta under my last row: 发送中 → 已送达 (receipt or voice 200 carries `utt_id`).
-- Long press on a bubble: Copy, Share; on my failed row also Retry and Delete draft.
+- Delivery meta under my last row: 发送中 → 已送达 (202 accepted; the row whose `utt_id` is the
+  message id replaces the pending row).
+- Long press on a bubble: Copy, Share; on 多多's bubble also Reply and 朗读 (read aloud, §7.7); on
+  my failed row also Retry and Delete draft.
 - Links and phone numbers are detected (`AttributedString` + data detectors). No markdown rendering in
   v1 (the room prompt asks for no markdown); Q10.
 
 ### 4.4 多多 working (screens `chat-working`)
 
-Driven by `turn` frames on the display socket, scoped to the pending turn.
+Driven by `turn` frames on `/live`, scoped to the pending turn.
 
 ```
-send / voice 200 ──▶ working bubble "收到了"         (turn received)
+message delivered ──▶ working bubble "收到了"        (turn received, message_ids)
                      ├─ "在想" + dots                (turn thinking, ≤ 1 per 2 s)
                      ├─ "在查" + step list           (turn tool: label, input_summary; "✓" result)
                      ├─ streaming text + caret        (duoduo_said deltas, same speech_id)
@@ -172,24 +175,20 @@ send / voice 200 ──▶ working bubble "收到了"         (turn received)
   thread scrolls the opened row to the top, because the bottom scroll anchor would otherwise push
   it up off screen. No steps, no line. The line sits outside the bubble so the bubble's long-press
   menu never covers it. Not persisted: after a relaunch an answer shows without its steps.
-- Correlation: `answer_final.utt_id` equals the inject receipt / voice `utt_id`. Answer log rows
-  carry the `utt_id` they answer (channel 09f9076); a row naming another utterance is never this
-  one's answer, a row without `utt_id` after this utterance's row still counts (older rows,
-  proactive messages). The brain runs one turn at a time and folds notes sent while it works into
-  that turn, answering the first note's `utt_id`: an `answer_final` / `idle` for another
-  utterance ends the bubble once the bubble has seen the turn work (a bubble still at 收到了 is
-  kept); a queued note's own turn brings it back with its first `thinking` frame.
+- Correlation: by `message_ids` on `turn`, `answer_final` and answer rows: the messages the
+  turn covered (the brain folds messages sent while it works into the running turn, so one turn
+  can cover several). `turn received` starts the bubble with its messages, and later deliveries
+  join it. An `answer_final` or `idle` naming one of the bubble's messages ends it (any one, for a
+  bubble of room speech without messages); an answer to other inputs leaves the bubble.
 - Order: a live answer whose log row has not arrived sits at the time it arrived, among the log
   rows, as its row will; so a note sent after it stays below it, live and after a catch-up alike.
-  The live bubble and its log row share one row id (`ans:<utt_id>`), so the row is updated in
+  The live bubble and its log row share one row id (`ans:<message_ids>`), so the row is updated in
   place when the log row lands.
 - Scrolling: while the end of the thread is on screen, every change scrolls to the end after
   layout. The bottom anchor alone could leave the lazy stack showing a blank stretch after a long
   row was replaced.
-- End without answer: the channel today emits `turn done` only after playback. A text-only turn
-  that ends with no answer leaves the bubble spinning. The link contract (`docs/ble-protocol.md` §9) needs
-  `turn idle` too (Q7). Until then the bubble falls back to "多多没有回复" when the next
-  `turn` for another utterance starts or on reconnect catch-up.
+- End without answer: `turn idle` naming the bubble's messages ends it. After a reconnect,
+  `ready.turn` restores the open turn's bubble or clears one whose turn ended meanwhile.
 
 ### 4.5 Text and attachments (screens `attachments`, `attach-menu`)
 
@@ -197,12 +196,17 @@ send / voice 200 ──▶ working bubble "收到了"         (turn received)
   plus a send arrow while attachment chips are present. Text mode: mic toggle · growing text field
   (max 6 lines then scroll) · `+` · send arrow when there is text or an attachment. The toggle
   switches modes; the last chosen mode is stored (`composer.voice`) and restored on launch. A text
-  draft is kept but neither shown nor sent while in hold-to-talk mode.
+  draft is kept but neither shown nor sent while in hold-to-talk mode. While ambient mode is on the
+  composer shows text input only (the toggle is hidden, the hold bar off): the room already hears
+  the phone. The stored mode returns when ambient mode ends.
 - `+` menu: 照片 (PHPicker, multi-select), 拍照 (camera), 文件 (document picker).
 - Chips above the field: image thumbnails / file tiles, ✕ to remove, per-chip upload progress.
   Upload starts when the chip is added (not at send) so send is fast; cached by file identity.
-- Send = all chips uploaded (`POST /api/upload`) → `POST /api/inject {text, attachments}`.
-  Failure keeps the draft and chips; the row shows "没发出去 · 轻点重试".
+- Send = all chips uploaded (`POST /api/upload`) → `POST /api/messages {text, attachments}`
+  (JSON, `Idempotency-Key` = the outbox item's id, kept across retries and relaunches). 202
+  accepts it; its row arrives on `/live` at delivery. A network error keeps the message queued
+  until the connection returns. Any other failure, a 5xx included, is not retried automatically:
+  the row shows "没发出去 · 轻点重试", and tapping it resends under the same `Idempotency-Key`.
 - 413 from upload → chip turns attention: "文件太大（上限 N MB）". The limit is unknown to the app
   before upload (Q8).
 - Images in the thread load via `GET /api/attachment?sha256&mime&name` (immutable, cached on disk);
@@ -211,7 +215,7 @@ send / voice 200 ──▶ working bubble "收到了"         (turn received)
   the outbox record as `payload.attachments: {path, mime}[]`. The channel fetches each once
   (`channel.file.download`), files it under the room's `attachments/<sha256>` beside uploads, and
   appends one row `{speaker:"多多", kind:"answer", text:"", attachments:[{name, mime, sha256}]}`
-  (live `imlog_append`, then history). A file the channel could not fetch keeps its name without
+  (live `row`, then history). A file the channel could not fetch keeps its name without
   `sha256` and shows as a disabled card. These rows stay out of the judge's and the brain's room
   context.
 
@@ -219,7 +223,7 @@ send / voice 200 ──▶ working bubble "收到了"         (turn received)
 
 | Phase | Gesture | UI |
 |---|---|---|
-| Idle | — | 按住说话 bar in the composer (hold-to-talk mode) |
+| Idle | — | 按住说话 bar in the composer (hold-to-talk mode; not while ambient mode is on) |
 | Too short | release < tap threshold, or while preparing | tooltip "按住说话"; nothing sent; cancel haptic (threshold: Q4, 300 ms) |
 | Preparing | touch down on the bar | in the touch's own frame (probe: drawn 11 ms median after the handler, 4-20 ms): the bar under the finger is pressed (scale 0.97, darker fill, label 按住说话) and the sheet pops up in a preparing state: 「准备中…」 instead of the timer, dimmed flat placeholder bars breathing (opacity 0.25-0.6, 1.1 s period; static at 0.43 with Reduce Motion), hint 「麦克风就绪后会轻震一下」. No haptic. Lasts until the input starts (about 0.25 s on the speaker route, 17 Pro Max; instant while ambient is on) |
 | Recording | the microphone input starts capturing | 0.12 s cross-fade to live: timer starts, waveform follows the mic, the bar turns teal 「松开发送」, hint 「松开发送 · 手指移出按钮取消」; the light haptic fires in the same view update as the switch (probe: within 1-9 ms of the live sheet being drawn). Nav subtitle 在听你说 |
@@ -227,10 +231,12 @@ send / voice 200 ──▶ working bubble "收到了"         (turn received)
 | Resumed | finger moves back onto the bar | timer and waveform return, bar teal again "松开发送"; haptic tick |
 | Cancelled | release off the bar | sheet drops, nothing sent, audio discarded |
 | Sending | release on the bar | sheet drops; my voice bubble appears dimmed with waveform + spinner, meta "正在识别…" |
-| Transcribed | `/api/voice` 200 `{text, utt_id}` | bubble shows transcript; working bubble starts |
-| Didn't catch | 422 `empty_transcript` | bubble removed, centre note "没听清，再说一次" |
-| ASR failed | 502 `asr_failed` | failed bubble: "识别出错 · 轻点重试" |
-| Not sent | network / 503 after retries | failed bubble: "没发出去 · 轻点重试"; packets kept, retry reuses the same `X-Voice-Id` |
+| Accepted | `/api/messages` 202 | meta stays "正在识别…"; no text yet |
+| Recognised | `message cleaned` (or the row with the message id) | bubble shows the text the brain receives, never the raw transcript; working bubble starts at `turn received` |
+| Didn't catch | `message failed(empty_transcript)` | bubble removed, centre note "没听清，再说一次" |
+| ASR failed | `message failed(asr_failed)` | failed bubble: "识别出错 · 轻点重试" |
+| Voice unavailable | 503 / `message failed(perception_unavailable)` | failed bubble: "语音服务暂不可用 · 轻点重试" |
+| Not sent | network / 5xx after retries | failed bubble: "没发出去 · 轻点重试"; packets kept, retry reuses the same `Idempotency-Key` |
 
 - Touch delivery: the bar handles raw UIKit touches (`touchesBegan`), not a SwiftUI drag
   gesture, and the conversation defers the bottom-edge system gesture
@@ -240,7 +246,7 @@ send / voice 200 ──▶ working bubble "收到了"         (turn received)
   logs `touch_age_ms`: the touch's hardware timestamp to the handler.
 - VoiceOver: the mic becomes a toggle (double-tap start, double-tap send, escape cancels); Magic
   Tap (two-finger double tap) does the same from anywhere in the conversation.
-- Retries are idempotent by `X-Voice-Id` (`docs/ble-protocol.md` §2); the existing `VoiceUploader` already does this.
+- Retries are idempotent by `Idempotency-Key` (`docs/ble-protocol.md` §2).
 - Incoming call / Siri during recording: recording stops and is kept as a failed-to-send draft.
 
 #### 4.6.1 Audio session for hold-to-talk
@@ -317,7 +323,9 @@ a previously paired device (forget it in iOS Settings › Bluetooth).
 ### 4.9 Settings (screens `settings`)
 
 Grouped list. Editing host/room/port/TLS reruns the onboarding step-2 check inline before saving.
-Sound: 连着 AirPods 时用 手机麦克风 (default) / AirPods 麦克风 (§4.6.1).
+Sound: 播放语音回复 (default on; the `/live` `audio` switch, §7.1), 保持屏幕常亮 (default off: while
+the app is in front the screen does not lock, so the phone can stand out as a speaker), 连着
+AirPods 时用 手机麦克风 (default) / AirPods 麦克风 (§4.6.1).
 Tailscale row: state, node name, IP, 退出登录 (confirm). Diagnostics: export logs (app log +
 tsnet log + Passport log as one share sheet), version.
 
@@ -325,14 +333,19 @@ tsnet log + Passport log as one share sheet), version.
 
 | Condition | Copy | Action |
 |---|---|---|
-| Upload / inject network failure | 没发出去 · 轻点重试 | retry same id |
-| 422 empty transcript | 没听清，再说一次 | — |
-| 502 asr_failed | 识别出错 · 轻点重试 | retry |
-| 503 cerebellum_unavailable | 语音服务暂不可用 | retry later |
+| Upload / message network failure | 没发出去 · 轻点重试 | voice upload: retried with the same key until its deadline; typed: network errors resent on reconnect, a 5xx or other status marked failed with no automatic retry; the user's tap resends with the same key |
+| `message failed(empty_transcript)` | 没听清，再说一次 | — |
+| `message failed(asr_failed)` | 识别出错 · 轻点重试 | retry |
+| 503 / `message failed(perception_unavailable)` | 语音服务暂不可用 | retry later |
+| Read aloud failed | see §7.7 | — |
+| `message failed(brain_unreachable)` | 没送到多多 (under the row) | resend as a new message |
 | 413 | 文件太大 | remove chip |
 | Mic permission denied | 需要麦克风权限才能说话 | 去设置 |
 | Bluetooth off / denied | 蓝牙已关闭，Passport 连不上 | 去设置 |
 | Protocol mismatch | 版本不匹配 | update |
+| 410 `update_required` | banner 多多随身需要更新 | 更新: opens the TestFlight sign-up form the README links |
+| `ready.api` absent or below 1, or 404 from `/api/messages` | banner 家里的 ambient 需要升级 · names the Upgrading section of ambient's `docs/deploy.md` | upgrade the channel |
+| `cerebellum_halt` reason `protocol` | 小脑与 channel 版本不一致，需要两端同时升级 (settings status, voice notice) | upgrade both |
 
 ## 5. Accessibility
 
@@ -355,45 +368,59 @@ is removed with the web view.
 | Feature | Endpoint / frame | Notes |
 |---|---|---|
 | Health check (onboarding, Passport `APP_STATE`) | `GET /healthz` | `{ok, rooms}` |
-| Initial state + recent history | `GET /api/state?room=` | `imlog` last 80, `daemon_ok`, `cerebellum_ok`, `capture.owner`, `controls`, `room_name`, `date` |
-| Older history | `GET /api/imlog?room=&date=YYYY-MM-DD` | one day per request, walked backwards while the user scrolls up |
-| Live updates (always) | WS `/live?room=` without `hello` | `imlog_append`, `turn`, `duoduo_said`, `answer_final`, `transcript`, `playback`, `tts_interrupted`, `record_unavailable`, `cerebellum`, `meta{state}`, `understood`/`wake_ignored`/`ack_silenced` |
-| Typed text | `POST /api/inject?room=` `{text, attachments?}` | 200 `{ok, utt_id, at, record_available}` |
-| Attachment upload | `POST /api/upload?room=&name=` (raw body, `Content-Type` = mime) | 200 `{name, mime, path, sha256}` → goes into `inject.attachments` |
+| Room state | `GET /api/state?room=` | `daemon_ok`, `cerebellum_ok`, `capture.owner`, `controls`, `room_name`, `date`, `limits`; no rows |
+| Older history | `GET /api/imlog?room=&date=YYYY-MM-DD` | one day per request, walked backwards while the user scrolls up; also the first load for a room without a cursor |
+| Rows without a socket | `GET /api/imlog?room=&since=<seq>` | `{entries, seq}`: Background App Refresh, BLE wake |
+| Live updates (always) | WS `/live?room=&since=<seq>&audio=0\|1` | `meta`, `audio_params` (audio on only), the rows after `since`, `ready{seq, turn, messages, api}`, then `row`, `message`, `turn`, `duoduo_said`, `answer_final`, `transcript`, `playback`, `tts_interrupted`, `cerebellum`, `understood`/`wake_ignored`/`ack_silenced` |
+| Typed text | `POST /api/messages?room=` JSON `{text, attachments?}`, `Idempotency-Key` | 202 `{message_id, at}` |
+| Attachment upload | `POST /api/upload?room=&name=` (raw body, `Content-Type` = mime) | 200 `{name, mime, path, sha256}` → goes into the message's `attachments` |
 | Attachment display | `GET /api/attachment?room=&sha256=&mime=&name=` | immutable, cache forever |
-| Hold-to-talk and Passport voice notes | `POST /api/voice?room=` (`application/vnd.ambient.opus-packets`, `X-Voice-Id`, `X-Voice-Source: phone\|passport`) | 200 `{voice_id, text, utt_id}`; 422/502/503/400/413 |
-| Ambient edge | second WS `/live?room=` with `hello{edge:"client", aec}` | section 7 |
+| Hold-to-talk and Passport voice notes | `POST /api/messages?room=` (`application/vnd.ambient.opus-packets`, `Idempotency-Key`, `X-Voice-Source: phone\|passport`) | 202 `{message_id, at}`; then `message cleaned` / `failed` on `/live` |
+| Ambient edge | `hello{edge:"client", aec}` on the same `/live` socket | section 7 |
 | Ambient mute | edge frame `mute{on}` | `on` is the room's capture switch: `on:true` = mic on, `on:false` = muted |
 | Ambient "别说了" | edge frame `hush` + local stop | |
 | Playback receipts | edge frame `played{speech_id, ms}` | watermark, not delta |
+| Press stops playback | edge frame `interrupted{speech_id}` | ambient on only: per speech cut or dropped during a press (section 7.4) |
+| Read aloud | `POST /api/speech?room=` JSON `{text}` | 200 streams `application/vnd.ambient.opus-packets` (the voice message framing); 413 `body_too_large`, 422 `nothing_to_speak`, 502 `synthesis_failed`, 503 `cerebellum_unavailable`; a body cut after the first packet is a reset (section 7.7) |
 
 Gaps found in the current channel (branch `feature/pocket-voice-note`):
 - No `turn idle` / end-of-turn-without-answer frame (Q7).
 - Upload size limit is not exposed before upload (Q8).
-- `/api/state` returns only today's last 80 rows; scroll-back uses `/api/imlog` per day, which has no
-  cursor for days with many rows (acceptable: one day is one file).
+- Scroll-back uses `/api/imlog` per day, which has no cursor inside a day (acceptable: one day is
+  one file).
 
 ## 7. Native ambient edge
 
-### 7.1 Sockets
+### 7.1 Socket
 
 ```
-display socket  /live?room=   no hello   always on while foreground or awaiting a reply
-edge socket     /live?room=   hello      only while ambient is on
+/live?room=&since=<seq>&audio=0|1   no hello while ambient is off   always on while foreground, a press or
+                                    hello while ambient is on        reply is pending, or ambient runs
 ```
 
-- Two sockets because a socket cannot un-hello: closing the edge socket is how the seat is released
-  at once (`EdgeHub.remove`), while the display socket keeps the conversation and the Passport reply
-  path untouched. Broadcast frames arrive on both; the edge socket consumes only audio-plane frames
-  (`audio_params`, `speech`, binary, `stop_audio`, `meta{role,state,conn}`) and ignores the rest.
-- Alternative (one socket that hellos when ambient turns on, reconnects without hello when it turns
-  off) is listed in Q11.
-- `Bridge/tsbridge` today has one text-only WS. It needs a second WS handle with binary send and
-  receive (one Opus packet per binary frame, ≤ 1 MiB per message).
+- `audio` is the phone's mouth switch, fixed for the connection's life: `1` while the
+  播放语音回复 setting is on and the app is in front or ambient mode runs, else `0`. A change of
+  either (the setting, the app entering or leaving the background) replaces the connection from the
+  cursor; `PocketEngine` treats a connection opened with the other switch as stale. Turning the
+  setting off also stops local playback at once.
+- Live mode: ambient on, the phone holds the capture seat; the room's speech comes here only, paced
+  by this phone's `played`. Message mode: ambient off (no capture owner in the room); every
+  audio-on surface receives the room's speech as fast as it is synthesized, the channel counts a
+  speech finished when its synthesis completes, and it takes no report from any surface. When a
+  room device holds the seat, it plays and the phone shows text.
+
+- One socket. Ambient on: `hello` on the open socket. Ambient off: close it and open a new
+  one from the stored cursor without `hello`, because a socket cannot un-hello; closing is how
+  the seat is released at once (`EdgeHub.remove`). The cursor replay means the close loses no rows.
+- `AmbientController` owns the socket: audio-plane frames (`audio_params`, `speech`, binary,
+  `stop_audio`, `meta{role,state,conn}`) go to the edge state machine, every text frame to
+  `PocketEngine`, which keeps the socket open while it is wanted and reopens it.
+- `Bridge/tsbridge` has one WS with text and binary both ways (one Opus packet per binary frame,
+  ≤ 1 MiB per message), ping and an immediate close.
 
 ### 7.2 Handshake (same rules as the web edge, `capture.js` / `transport.js`)
 
-1. Open the socket; receive `meta{conn}`.
+1. Open the socket (or use the open one); receive `meta{conn}`.
 2. Start capture. Send `hello{type:"hello", room, conn, edge:"client", aec}` only after the first
    encoded packet exists: a seat without audio makes the room deaf.
 3. Receive `meta{role}` then `audio_params{rate:16000, frame_ms:120}`. `rate` ≠ 16000 → warn and stop.
@@ -423,25 +450,42 @@ Rules from `audio-link.js`, which the native edge must keep:
 
 1. Binary frames belong to the `speech_id` of the latest `speech{speech_id}` frame. A binary frame
    before any `speech` is dropped.
-2. Decode with `OpusVoiceDecoder` (16 kHz), schedule buffers on the player node.
-3. Report `played{speech_id, ms}` as a cumulative watermark from buffer completion callbacks (not
-   from scheduling), every 250 ms (the web cadence) and once at drain. The channel leaves SPEAKING
-   only when `played ≥ audio_ms`.
-4. `stop_audio{speech_id?, reason}`: stop at once if the id is an answer (`c-…`) or absent while an
-   answer plays; let fillers (`s…`) finish. No `played` after a stop for that id. Reset the decoder.
-5. 别说了 (local hush): stop everything locally, including fillers, then send `hush`.
+2. A `speech` declaration stops nothing: it does not clear the player, so audio already received
+   plays first and speeches play in the order they were declared (in message mode several arrive
+   faster than they play). It resets the decoder, since a new speech is a new Opus stream; packets
+   are decoded as they arrive, so the reset loses no audio.
+3. Decode with `OpusVoiceDecoder` (16 kHz), schedule buffers on the player node.
+4. Ambient on only: report `played{speech_id, ms}` as a cumulative watermark from buffer completion
+   callbacks (not from scheduling), every 250 ms (the web cadence) and once at drain. The channel
+   leaves SPEAKING only when `played ≥ audio_ms`. With ambient off nothing is reported.
+5. `stop_audio{speech_id?, reason}` naming the current speech, or naming none, clears every
+   buffered speech whatever its id, and resets the decoder; one naming another speech is stale and
+   ignored. Fillers (`s…`) finish. No `played` after a stop for that id.
+6. 别说了 (local hush): stop everything locally, including fillers and a read, then send `hush`.
+7. A press (Passport, or hold-to-talk where it is allowed) stops local playback at once, fillers
+   too. With ambient on it sends `interrupted{speech_id}` for the speech that was playing; whether
+   earlier answers are superseded is decided when the press's message arrives. While the press is
+   held nothing plays: each `speech` that arrives is dropped (its audio discarded) and, with
+   ambient on, reported with the same frame, because the channel waits for playback reports. With
+   ambient off the drop is local and silent. The press is app-local: no frame announces it. The
+   text stays in the thread.
+8. Ambient off: playback runs on a playback-only engine (no input node, so no microphone) in a
+   `.playback` / `.spokenAudio` session with `.duckOthers`, started at the first scheduled block
+   and stopped, with the session deactivated, when every scheduled block has played or when it
+   fails to start. A hold or ambient mode replaces it with their own engine; any engine stops when
+   its last block has played and no hold or ambient mode holds it.
 
 Barge-in needs nothing extra on the phone: with echo cancellation the user's voice reaches the
 cerebellum, which decides and the channel sends `stop_audio{reason:"barge_in"}`.
 
 ### 7.5 Interaction with hold-to-talk and the Passport
 
-- Hold-to-talk while ambient is on: send `mute{on:false}` (room mic off), keep the uplink flowing
-  (the channel drops it while the mic is off; the seat lease would expire in a long press
-  otherwise) and record the voice note from the same capture, then `mute{on:true}` on release. Without this the same speech enters
-  the brain twice (voice note + room judge). Q12.
-- Passport press while ambient is on: the phone mic hears the user too; send `mute` between
-  `PRESS_START` and `PRESS_END` for the same reason. Q12.
+- Hold-to-talk while ambient is on: off; the composer offers text only (§4.5). The room already
+  hears the phone, and a press would only duplicate it.
+- Passport press while ambient is on: the phone mic hears the user too; send `mute{on:false}`
+  between `PRESS_START` and `PRESS_END` (room mic off; the uplink keeps flowing, since the seat
+  lease would expire in a long press otherwise), so the same speech does not enter the brain twice
+  (voice note + room judge). Q12. The press also stops playback (§7.4 item 7).
 - 静音 in the ambient view sends `mute{on:false}` and stops sending bytes (privacy: bytes do not leave
   the phone). After `seat_starve_ms` the seat goes `unowned`; the UI shows muted, not deaf.
 
@@ -449,27 +493,60 @@ cerebellum, which decides and the channel sends `stop_audio{reason:"barge_in"}`.
 
 - Foreground: as above.
 - App leaves the foreground: depends on Q3. With only `bluetooth-central`, iOS
-  suspends capture; the app closes the edge socket on `scenePhase == .background` so the seat is
+  suspends capture; the app closes the seated socket on `scenePhase == .background` so the seat is
   released at once and answers become text (`unspoken` rows). On return it does not reopen ambient
   automatically unless Q3 says so.
-- Interruptions (call, Siri, alarm): stop capture, close the edge socket, show 已暂停; on
-  `.ended` with `.shouldResume` reopen and re-hello.
+- With ambient off nothing plays in the background: leaving the front asks for `audio=0` (the
+  connection is replaced, or closed when nothing needs it) and stops a read. 保持屏幕常亮 keeps the
+  screen on while the app is in front (`isIdleTimerDisabled`), for a phone standing out as a
+  speaker.
+- Interruptions (call, Siri, alarm): stop capture, close the socket (it reopens without `hello`),
+  show 已暂停; on `.ended` with `.shouldResume` restart capture and re-hello.
 - Thermal state ≥ serious: show a note; no automatic shutdown in v1.
 - Answers for the Passport (no APNs): every answer the app receives is
-  forwarded as REPLY, with or without a pending press: live on the display socket (foreground,
-  reply wait, ambient), from the room log when the Passport link comes up (BLE wake) and from
-  Background App Refresh (`BGAppRefreshTask` `dev.openduo.pocket.refresh`, scheduled on
-  every move to the background with no earliest time; iOS decides when). Details in
-  `docs/ble-protocol.md`.
+  forwarded as REPLY, with or without a pending press: live on `/live` (foreground, press or reply
+  wait, ambient), and as rows above the cursor (`GET /api/imlog?since=`) when the Passport link
+  comes up (BLE wake) and from Background App Refresh (`BGAppRefreshTask`
+  `dev.openduo.pocket.refresh`, scheduled on every move to the background with no earliest time;
+  iOS decides when). Details in `docs/ble-protocol.md`.
 - All per-frame work is O(append); SwiftUI updates only while active (repository rule).
+
+### 7.7 Read aloud
+
+- Long press on a 多多 bubble → 朗读: `POST /api/speech` with the text the bubble shows (the full
+  text of a truncated row). The channel strips the markdown, synthesizes it and streams the
+  packets back; the app plays them as they arrive. Nothing is stored; every read synthesizes again.
+- A read stops the reply that plays or is declared; with ambient on that reply is reported
+  `interrupted`, as a press reports it. Chunks of a stopped read are dropped, and a read cancelled
+  before its request starts is never sent. A press,
+  别说了, or a new `speech` declaration stops the read (the live exchange goes first). It is not
+  stopped by a reconnect or by `stop_audio`, which concern the room's speech.
+- With ambient off it plays on the playback-only engine; leaving the front stops it.
+- The request has no deadline: the tsnet bring-up is bounded by `connectTimeout`, and the stream
+  ends when it completes, breaks, or is cancelled by one of the stops above.
+- Failures (toast): 422 这条没有能读的文字, 413 这条太长，读不了, 502 语音合成失败, 503 语音服务暂不可用,
+  no response 连不上多多, a body cut after audio started 朗读中断了.
+
+### 7.8 Backlog: playback with ambient off
+
+The playback-only engine starts at the first block and stops when the queue empties, so a stall
+inside a streamed reply restarts it (a short gap; other audio unducks and ducks again). Two
+alternatives are kept for later:
+- keep the engine until the channel's `playback` done event, fewer restarts at the cost of tying
+  the engine's life to a channel event;
+- mix with other audio without ducking and keep the engine while the app is in front with the
+  switch on, no restarts, but replies compete with music.
 
 ## 8. Offline cache and history
 
-- Store: one JSON file per room per day (`imlog-YYYY-MM-DD`), replaced whole when fetched.
-  Today is replaced on every `/api/state` and patched live from `imlog_append`; past days are
-  replaced when re-fetched. Nothing is merged locally beyond pending rows.
-- Local pending rows (unsent text, voice notes, uploads) live in a separate queue file and are shown
-  until a server row with the same `utt_id` arrives (or, for not-yet-sent rows, until sent).
+- Store: one JSON file per room per day (`imlog-YYYY-MM-DD`), plus the room's cursor: the `seq`
+  of the newest row held, written after the rows it names. Rows arrive once, above the cursor:
+  replayed on connect (`/live?since=`), live as `row`, or from `GET /api/imlog?since=`; each is
+  appended to its day. A room without a cursor takes `ready.seq` and loads its days by date; a
+  fetched day replaces its file whole. Nothing is merged locally beyond pending rows.
+- Local pending rows (unsent text, voice notes, uploads) live in a separate queue file, one
+  message each under a fixed key, and are shown until the row whose `utt_id` is that key arrives.
+  After a replay, an accepted message that `ready` neither lists nor logged is shown as failed.
 - Launch shows the cache instantly; the network result replaces it without moving the scroll
   position.
 - Retention: Q13.
@@ -481,7 +558,7 @@ App/
 ├── Engine/   PocketEngine (Passport, voice notes) · ConversationStore · AmbientController ·
 │             AudioIO · HoldTiming
 ├── Device/   PassportLink (BLE central)
-├── Net/      Tailnet (tsnet, display and edge sockets) · ChannelClient (typed calls for section 6)
+├── Net/      Tailnet (tsnet, the /live socket) · ChannelClient (typed calls for section 6)
 ├── Support/  Settings · AppLog · Demo (Debug fixtures and probes)
 └── Views/    ConversationView · ThreadView · Composer · AmbientView · PassportSheet ·
               SettingsView · OnboardingView · AttachmentViews · Theme
@@ -506,7 +583,7 @@ is shared by the Passport reply path, so the Passport and the screen never disag
 | Q8 | Upload size limit | a) expose `upload_max_bytes` in `/api/state` · b) learn from the first 413 · c) client-side constant | a) correct up front, additive field · b) one wasted upload · c) drifts from the server | a |
 | Q9 | When to show the offline banner | a) after the first failed reconnect attempt · b) after a fixed delay · c) immediately | a) no constant, avoids flashing on wake · b) needs a number · c) flashes on every wake | a |
 | Q10 | Markdown in answers | a) plain text (room prompt asks for none) · b) render a safe subset (bold, lists, links) | a) consistent with the Passport · b) better for long answers if the prompt changes | a |
-| Q11 | Ambient socket model | a) separate edge socket (section 7.1) · b) one socket: hello when on, reconnect without hello when off | a) clean seat release, display path never interrupted, needs a second WS in tsbridge · b) one WS, but every toggle drops live frames briefly | a |
+| Q11 | Ambient socket model | a) separate edge socket · b) one socket: hello when on, reconnect without hello when off (section 7.1) | a) clean seat release, display path never interrupted, needs a second WS in tsbridge · b) one WS; the reconnect resumes from the row cursor, so a toggle loses no rows | decided: b |
 | Q12 | Phone mic during hold-to-talk / Passport press in ambient mode | a) `mute` the edge for the press (section 7.5) · b) keep streaming and accept double ingress · c) turn ambient off for the press | a) no duplicates, uses an existing frame · b) duplicates in the brain · c) seat loss and re-hello churn | a |
 | Q13 | Cache retention | a) keep everything · b) keep N days · c) keep only what fits a size budget | a) simplest, grows forever · b/c) need a number | a for v1; revisit with data |
 | Q14 | App icon and name treatment | a) dog `listening` pose on paper · b) dog on teal · c) wordmark | brand recognition vs legibility at 60 pt | decided: a line-drawn curly pompom around voice bars on cream, no face; source in `docs/design/icon/final/` |

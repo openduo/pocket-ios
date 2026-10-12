@@ -18,7 +18,9 @@ answer comes back to the phone and the Passport screen. Product page:
 ## Get the app
 
 DuoDuo Pocket is in TestFlight beta. Apply with the [sign-up form](https://docs.google.com/forms/d/e/1FAIpQLSfIUllzEsHU18l3q_K1SBo8FBx-GztPhzUKotWpp74mYAIH-A/viewform); the TestFlight
-invitation arrives by email once the application is approved. Without a DuoDuo of your own,
+invitation arrives by email once the application is approved. Keep automatic updates on for
+DuoDuo Pocket in TestFlight: when your ambient at home is upgraded, an older app stops talking to
+it and shows 多多随身需要更新 until it is updated. Without a DuoDuo of your own,
 tap 先体验 (Try it first) on the first screen to see the app with built-in demo content.
 
 ## What it needs
@@ -37,19 +39,21 @@ tap 先体验 (Try it first) on the first screen to see the app with built-in de
 SwiftUI views ◀── AppModel (main actor; snapshots only while active)
                     ▲            ▲              ▲
 ConversationStore ──┘  AmbientController ──┘   PocketEngine ──┘
- cache · outbox ·        edge socket ·          Passport link · voice notes ·
- turn state              VoiceIO (AVAudioEngine, AEC, Opus) · display socket · replies
+ cache · cursor ·        the /live socket ·     Passport link · voice notes ·
+ outbox · turn state     VoiceIO (AVAudioEngine, AEC, Opus)    RESULT · replies
         │                        │                          │
         └──────────── tsnet (Go, gomobile) ─────────────────┴──▶ channel host (tailnet, HTTPS)
-                       /api/state · /api/imlog · /api/inject · /api/upload · /api/attachment
-                       /api/voice · /live (display, no hello) · /live (edge, hello + Opus)
+                       /api/state · /api/imlog · /api/messages · /api/upload · /api/attachment
+                       /live (events; hello + Opus while ambient is on)
 Passport ──BLE──▶ PassportLink ─▶ PocketEngine ─▶ RESULT / REPLY / REPLY_DONE / APP_STATE / WORK
 ```
 
 - Everything dials out through tsnet; nothing listens on the phone.
-- Two `/live` sockets: the display socket (conversation frames, Passport replies) and, only while
-  ambient is on, the edge socket that holds the room's capture seat. Closing the edge socket
-  releases the seat without touching the conversation.
+- One `/live` socket per room: conversation events always; with ambient on, the app says `hello`
+  on it to hold the room's capture seat. Turning ambient off closes it and opens a new one without
+  `hello`. Each connection resumes from the last row the app holds (`since=<seq>`).
+- Typed text and voice notes are messages (`POST /api/messages`, one `Idempotency-Key` each): a
+  202 accepts them, and their text, delivery and answer arrive as `/live` events.
 - Background budget: per audio frame only O(append) work on audio queues; SwiftUI is updated only
   while the app is active, from coalesced snapshots.
 - Background modes: `bluetooth-central` (state restoration relaunches the app for Passport
@@ -79,8 +83,8 @@ Passport ──BLE──▶ PassportLink ─▶ PocketEngine ─▶ RESULT / REP
 
 - `Tools/PassportSim/run.sh` runs the device side of the link on a Mac (pairing, INFO, presses of
   synthesized speech in real time, KEEPALIVE until REPLY_DONE). Commands go to `logs/control`.
-- `Tools/mock-channel` answers `/api/voice`, `/live` and `/api/state` with fake transcripts, for
-  testing the upload/reply path without a channel.
+- `Tools/mock-channel` answers `/api/messages`, `/live`, `/api/imlog` and `/api/state` with fake
+  transcripts, for testing the upload/reply path without a channel.
 - Use a phone that does not share an Apple ID with the Mac: Continuity holds its own LE link to
   the Mac and can block connects.
 

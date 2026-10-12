@@ -10,8 +10,8 @@ phone side of the Passport accessory link.
 - `Packages/PocketKit/` — platform-independent code shared with the simulator and tested on the
   host: link PDU codec, voice-note body, upload with idempotent retry, reply tracker, Opus wrapper,
   conversation cache, outbox, turn state, thread rows, ambient edge state machine.
-- `Bridge/tsbridge/` — Go package bound with gomobile: embedded tsnet node, native requests, the
-  display socket and the ambient edge socket.
+- `Bridge/tsbridge/` — Go package bound with gomobile: embedded tsnet node, native requests and
+  the room's `/live` socket.
 - `Tools/PassportSim/` — macOS stand-in for the Passport (device side of the link).
 - `Tools/mock-channel/` — fake channel for the upload and reply path.
 - `docs/` — link contract, constants and their basis, app design, Opus build, final app icon.
