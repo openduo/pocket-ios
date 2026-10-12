@@ -84,6 +84,9 @@ final class AppModel: ObservableObject {
         ConversationStore.shared.onChange = { [weak self] in
             Task { @MainActor in self?.chat = ConversationStore.shared.snapshot() }
         }
+        AmbientController.shared.onReadFailure = { [weak self] f in
+            Task { @MainActor in self?.toast = Self.readFailureText(f) }
+        }
         AmbientController.shared.onChange = { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
@@ -171,6 +174,25 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: derived display state
+
+    /// Why a read aloud did not play in full.
+    static func readFailureText(_ f: ReadAloudFailure) -> String {
+        switch f {
+        case .nothingToSpeak: String(localized: "这条没有能读的文字")
+        case .tooLong: String(localized: "这条太长，读不了")
+        case .synthesisFailed: String(localized: "语音合成失败")
+        case .unavailable: String(localized: "语音服务暂不可用")
+        case .notConnected: String(localized: "连不上多多")
+        case .cut: String(localized: "朗读中断了")
+        case .other(let status, _): String(localized: "朗读失败（\(status)）")
+        }
+    }
+
+    /// Why voice is off: the channel and its cerebellum speak different majors, or the service is down.
+    var voiceUnavailableText: String {
+        chat.room?.cerebellumMismatch == true
+            ? String(localized: "小脑与 channel 版本不一致，需要两端同时升级") : String(localized: "语音服务暂不可用")
+    }
 
     var voiceAvailable: Bool { chat.room?.cerebellumOK != false && chat.room?.uploadsDisabled != true }
 
@@ -263,6 +285,8 @@ final class AppModel: ObservableObject {
     /// from then on is in the note.
     /// Synchronous, so the pressed button and the preparing sheet draw in the touch's own frame.
     func beginHold() -> Bool {
+        // Hold-to-talk is off while ambient mode is on: the room already hears the phone.
+        guard !ambient.isOn else { return false }
         HoldTiming.shared.mark("begin_hold")
         if VoiceIO.permission == .undetermined {
             // The permission alert takes the finger off the button: ask now, record next time.

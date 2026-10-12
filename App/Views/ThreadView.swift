@@ -278,6 +278,10 @@ struct DuoduoBubble: View {
                             model.voiceInput = false
                             model.quote = text
                         } label: { Label(String(localized: "回复"), systemImage: "arrowshape.turn.up.left") }
+                        // Reads the text this bubble shows; the channel strips its markdown.
+                        Button { AmbientController.shared.readAloud(text) } label: {
+                            Label(String(localized: "朗读"), systemImage: "speaker.wave.2")
+                        }
                         Button { UIPasteboard.general.string = text } label: { Label(String(localized: "拷贝"), systemImage: "doc.on.doc") }
                         ShareLink(item: text) { Label(String(localized: "分享"), systemImage: "square.and.arrow.up") }
                     }
@@ -359,7 +363,8 @@ struct PendingRow: View {
         case .voice(_, let ms):
             voice = "phone"
             duration = ms
-            if case .delivered(_, _, let tr, _) = item.state { text = tr ?? "" } else { text = "" }
+            // Only the text the brain receives, once the channel reports it.
+            if case .accepted(_, let cleaned) = item.state { text = cleaned ?? "" } else { text = "" }
         }
         let meta: Meta
         var dimmed = false
@@ -372,8 +377,8 @@ struct PendingRow: View {
             dimmed = true
         case .failed(let reason):
             meta = .attention(reason)
-        case .delivered(_, _, _, let recorded):
-            meta = .plain(recorded ? String(localized: "已送达") : String(localized: "已送达，记录未保存"))
+        case .accepted(_, let cleaned):
+            meta = item.isVoice && cleaned == nil ? .progress(String(localized: "正在识别…")) : .plain(String(localized: "已送达"))
         }
         var failed = false
         if case .failed = item.state { failed = true }
@@ -386,7 +391,7 @@ struct PendingRow: View {
                 if case .failed = item.state {
                     Button { ConversationStore.shared.retry(item.id) } label: { Label(String(localized: "重试"), systemImage: "arrow.clockwise") }
                 }
-                if item.uttID == nil {
+                if !item.isAccepted {
                     Button(role: .destructive) { ConversationStore.shared.delete(item.id) } label: {
                         Label(String(localized: "删除"), systemImage: "trash")
                     }

@@ -94,6 +94,80 @@ final class Tailnet: @unchecked Sendable {
     }
 }
 
+extension Tailnet {
+    /// One streamed request (a read aloud). Blocks until the body ends, breaks or is cancelled;
+    /// the 200 body goes to `request` as it arrives. Throws `TransportFailure` when no response
+    /// arrived or the body broke.
+    func stream(_ request: StreamRequest, method: String, path: String, headers: [String: String], body: Data,
+                upTimeout: TimeInterval) throws -> (status: Int, body: Data) {
+        if TryMode.active {
+            let (status, data) = TryChannel.shared.request(method: method, path: path, headers: headers, body: body)
+            guard status == 200 else { return (status, data) }
+            request.onStreamData(data)
+            return (status, Data())
+        }
+        try up(timeout: upTimeout)
+        let hdr = String(decoding: try JSONSerialization.data(withJSONObject: headers), as: UTF8.self)
+        // A request cancelled while tsnet came up is never sent.
+        guard request.begin() else { throw TransportFailure.network("cancelled") }
+        defer { request.end() }
+        var err: NSError?
+        let res = TsbridgeStream(request.id, method, path, hdr, body, request, &err)
+        if let err { throw TransportFailure.network(err.localizedDescription) }
+        guard let res else { throw TransportFailure.network("no response") }
+        return (res.status, res.body ?? Data())
+    }
+}
+
+/// The receiver of one streamed response body; `cancel()` ends the request, or keeps it from
+/// being sent when it has not started.
+final class StreamRequest: NSObject, TsbridgeStreamHandlerProtocol, @unchecked Sendable {
+    private static let idLock = NSLock()
+    private static var last: Int64 = 0
+
+    let id: Int64
+    private let onData: (StreamRequest, Data) -> Void
+    private let lock = NSLock()
+    private enum State { case idle, running, cancelled, done }
+    private var state = State.idle
+
+    /// `onData` gets each chunk with the request it belongs to.
+    init(onData: @escaping (StreamRequest, Data) -> Void) {
+        Self.idLock.lock()
+        Self.last += 1
+        id = Self.last
+        Self.idLock.unlock()
+        self.onData = onData
+    }
+
+    /// Marks the request as sent; false when it was cancelled first.
+    func begin() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard state == .idle else { return false }
+        state = .running
+        return true
+    }
+
+    func end() {
+        lock.lock(); state = .done; lock.unlock()
+    }
+
+    func cancel() {
+        lock.lock()
+        let running = state == .running
+        if state == .idle || running { state = .cancelled }
+        lock.unlock()
+        // Go is told only about a request it may hold; see `StreamCancel`.
+        if running, !TryMode.active { TsbridgeStreamCancel(id) }
+    }
+
+    /// The bytes are Go heap memory, valid only during this call (see `LiveSocket.onLiveBinary`).
+    func onStreamData(_ data: Data?) {
+        guard let data else { return }
+        onData(self, Data([UInt8](data)))
+    }
+}
+
 /// `ChannelTransport` over tsnet.
 struct TsnetTransport: ChannelTransport {
     let tuning: PocketTuning
@@ -111,100 +185,68 @@ struct TsnetTransport: ChannelTransport {
     }
 }
 
-/// The channel's display socket: `/live?room=…` without `hello`, so it never takes the room's
-/// capture seat. Frames arrive on Go threads and are handed to `onFrame`.
-final class DisplaySocket: NSObject, TsbridgeFrameHandlerProtocol, @unchecked Sendable {
-    var onFrame: (([String: Any]) -> Void)?
-    var onClosed: ((String) -> Void)?
-
-    override init() {
-        super.init()
-        TsbridgeSetHandler(self)
-    }
-
-    var isOpen: Bool { TryMode.active ? TryChannel.shared.displayOpen(self) : TsbridgeWSIsOpen() }
-
-    func open(room: ChannelSettings, timeout: TimeInterval) throws {
-        if TryMode.active { return TryChannel.shared.openDisplay(self) }
-        try Tailnet.shared.up(timeout: timeout)
-        var err: NSError?
-        TsbridgeWSOpen("/live?room=\(room.roomQuery)", Int64(timeout * 1000), &err)
-        if let err { throw TransportFailure.network(err.localizedDescription) }
-    }
-
-    func ping(timeout: TimeInterval) -> Bool {
-        if TryMode.active { return TryChannel.shared.displayOpen(self) }
-        var err: NSError?
-        TsbridgeWSPing(Int64(timeout * 1000), &err)
-        return err == nil
-    }
-
-    func close() {
-        TryChannel.shared.closeDisplay(self)
-        TsbridgeWSClose()
-    }
-
-    func onText(_ text: String?) {
-        // Frames are per conversation event, never per audio packet (binary goes to the edge).
-        guard let text,
-              let obj = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else { return }
-        onFrame?(obj)
-    }
-
-    func onClosed(_ reason: String?) { onClosed?(reason ?? "") }
-}
-
-/// The ambient edge socket: a second `/live?room=…` that says `hello` and carries Opus both ways
-/// (design §7.1). Frames arrive on Go threads in order.
-final class EdgeSocket: NSObject, TsbridgeEdgeHandlerProtocol, @unchecked Sendable {
+/// The room's one `/live` connection (design §7.1): conversation events always; with ambient
+/// mode on, the app's `hello` takes the capture seat and Opus flows both ways. A connection cannot
+/// un-hello, so leaving ambient mode closes it and opens a new one. Frames arrive on Go threads,
+/// in order.
+final class LiveSocket: NSObject, TsbridgeLiveHandlerProtocol, @unchecked Sendable {
     var onText: ((String) -> Void)?
     var onBinary: ((Data) -> Void)?
     var onClosed: ((String) -> Void)?
     /// Writes go through their own queue: a write may block up to the bridge's write timeout on a
     /// dead path, and that must never stall capture or playback.
-    private let sendQueue = DispatchQueue(label: "pocket.edge.send", qos: .userInitiated)
+    private let sendQueue = DispatchQueue(label: "pocket.live.send", qos: .userInitiated)
 
     override init() {
         super.init()
-        TsbridgeSetEdgeHandler(self)
+        TsbridgeSetLiveHandler(self)
     }
 
-    var isOpen: Bool { TryMode.active ? TryChannel.shared.edgeOpen(self) : TsbridgeEdgeIsOpen() }
+    var isOpen: Bool { TryMode.active ? TryChannel.shared.liveOpen(self) : TsbridgeLiveIsOpen() }
 
-    func open(room: ChannelSettings, timeout: TimeInterval) throws {
-        if TryMode.active { return TryChannel.shared.openEdge(self) }
+    /// Dials `path` (`ChannelPaths.live`), replacing any held socket without a close report.
+    func open(path: String, timeout: TimeInterval) throws {
+        if TryMode.active { return TryChannel.shared.openLive(self, path: path) }
         try Tailnet.shared.up(timeout: timeout)
         var err: NSError?
-        TsbridgeEdgeOpen("/live?room=\(room.roomQuery)", Int64(timeout * 1000), &err)
+        TsbridgeLiveOpen(path, Int64(timeout * 1000), &err)
         if let err { throw TransportFailure.network(err.localizedDescription) }
     }
 
-    /// Closes after the frames already queued have been written (each write is bounded).
+    func ping(timeout: TimeInterval) -> Bool {
+        if TryMode.active { return TryChannel.shared.liveOpen(self) }
+        var err: NSError?
+        TsbridgeLivePing(Int64(timeout * 1000), &err)
+        return err == nil
+    }
+
+    /// Closes after the frames already queued have been written (each write is bounded). Not
+    /// reported through `onClosed`.
     func close() {
-        TryChannel.shared.closeEdge(self)
-        sendQueue.sync { TsbridgeEdgeClose() }
+        TryChannel.shared.closeLive(self)
+        sendQueue.sync { TsbridgeLiveClose() }
     }
 
     func send(json: [String: Any]) {
-        if TryMode.active { return TryChannel.shared.edgeReceived(json) }
+        if TryMode.active { return TryChannel.shared.liveReceived(json) }
         guard let d = try? JSONSerialization.data(withJSONObject: json) else { return }
         let s = String(decoding: d, as: UTF8.self)
-        sendQueue.async { var e: NSError?; TsbridgeEdgeSendText(s, &e) }
+        sendQueue.async { var e: NSError?; TsbridgeLiveSendText(s, &e) }
     }
 
     /// In try-it mode the microphone's packets go nowhere: nothing leaves the phone.
     func send(packet: Data) {
         if TryMode.active { return }
-        sendQueue.async { var e: NSError?; TsbridgeEdgeSendBinary(packet, &e) }
+        sendQueue.async { var e: NSError?; TsbridgeLiveSendBinary(packet, &e) }
     }
 
-    func onEdgeText(_ text: String?) { if let text { onText?(text) } }
+    func onLiveText(_ text: String?) { if let text { onText?(text) } }
     /// gomobile passes callback `[]byte` arguments without a copy (`dataWithBytesNoCopy`, never
     /// freed): the bytes are Go heap memory, valid only during this call. Copy before the packet
     /// moves to another queue.
-    func onEdgeBinary(_ data: Data?) {
+    func onLiveBinary(_ data: Data?) {
         guard let data else { return }
         onBinary?(Data([UInt8](data)))
     }
-    func onEdgeClosed(_ reason: String?) { onClosed?(reason ?? "") }
+    func onLiveClosed(_ reason: String?) { onClosed?(reason ?? "") }
 }

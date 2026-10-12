@@ -4,9 +4,10 @@
 import Foundation
 
 /// Messages the user sent from this phone that the room log does not show yet: queued while
-/// offline (design Q5), in flight, failed, or delivered and waiting for their log row. A row
-/// leaves the outbox when the server's log shows the same `utt_id` (server authority) or when the
-/// user deletes it.
+/// offline (design Q5), in flight, failed, or accepted and waiting for their log row. Each item is
+/// one message with a fixed id, sent as its `Idempotency-Key`, so a resend (after a lost response
+/// or a relaunch) is the same message to the channel. An item leaves the outbox when the room log
+/// shows a row whose `utt_id` is its message id (server authority) or when the user deletes it.
 public struct OutboxItem: Codable, Equatable, Identifiable, Sendable {
     public enum Body: Codable, Equatable, Sendable {
         /// Typed text with uploaded attachments (each carries the channel `path`).
@@ -21,8 +22,9 @@ public struct OutboxItem: Codable, Equatable, Identifiable, Sendable {
         case sending
         /// Final failure that needs the user (tap to retry). `reason` is user-facing copy.
         case failed(reason: String)
-        /// Accepted by the channel; waiting for the log row with this `utt_id`.
-        case delivered(uttID: String?, at: String?, transcript: String?, recordAvailable: Bool)
+        /// Accepted by the channel (202); waiting for its row. `cleaned` is a voice note's text as
+        /// the brain receives it, once the channel reports it.
+        case accepted(at: String?, cleaned: String?)
     }
 
     public var id: UUID
@@ -37,10 +39,14 @@ public struct OutboxItem: Codable, Equatable, Identifiable, Sendable {
         self.state = state
     }
 
-    public var uttID: String? {
-        if case .delivered(let u, _, _, _) = state { return u }
-        return nil
+    /// The message id: the voice note's id for a voice item, the item id for typed text. The
+    /// channel lowercases the key; so does the app.
+    public var messageID: String {
+        if case .voice(let vid, _) = body { return vid.uuidString.lowercased() }
+        return id.uuidString.lowercased()
     }
+
+    public var isAccepted: Bool { if case .accepted = state { true } else { false } }
 
     public var isVoice: Bool { if case .voice = body { true } else { false } }
 }
@@ -68,13 +74,16 @@ public struct Outbox: Codable, Equatable, Sendable {
         items.filter { if case .queued = $0.state { true } else { false } }
     }
 
-    /// Drops delivered items whose row is in the server log (by `utt_id`). Returns removed ids.
+    /// The item with this message id.
+    public func item(messageID: String) -> OutboxItem? { items.first { $0.messageID == messageID } }
+
+    /// Drops items whose row is in the server log (`utt_id` = message id). Returns removed ids.
     @discardableResult
     public mutating func reconcile(with entries: [ImlogEntry]) -> [UUID] {
         let seen = Set(entries.compactMap { $0.isTyped ? $0.utt_id : nil })
         var removed: [UUID] = []
         items.removeAll { item in
-            guard let u = item.uttID, seen.contains(u) else { return false }
+            guard seen.contains(item.messageID) else { return false }
             removed.append(item.id)
             return true
         }
@@ -82,8 +91,8 @@ public struct Outbox: Codable, Equatable, Sendable {
     }
 
     /// After a launch nothing is in flight: a `sending` item (the app was killed mid-send) becomes
-    /// `queued` again. A voice note's retry reuses its voice id, so the channel answers it with the
-    /// first result instead of ingressing it twice; a text retry has no such key (see constants.md).
+    /// `queued` again. Its resend carries the same key, so the channel answers it with the first
+    /// receipt instead of taking it twice.
     public mutating func recoverAfterLaunch() {
         for i in items.indices { if case .sending = items[i].state { items[i].state = .queued } }
     }
@@ -104,7 +113,12 @@ public final class OutboxStore {
            let o = try? dec.decode(Outbox.self, from: d) {
             outbox = o
         } else {
+            // No outbox, or one this build cannot read: start empty, without the voice packets
+            // of the items that went with it.
             outbox = Outbox()
+            for f in (try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [] {
+                try? fm.removeItem(at: f)
+            }
         }
         outbox.recoverAfterLaunch()
     }

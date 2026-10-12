@@ -196,7 +196,7 @@ struct AmbientButton: View {
     var body: some View {
         Button {
             if model.ambient.isOn { model.ambientExpanded = true } else if model.voiceAvailable { model.toggleAmbient() } else {
-                model.toast = String(localized: "语音服务暂不可用")
+                model.toast = model.voiceUnavailableText
             }
         } label: {
             // On: filled, and the tap opens the call view instead of toggling.
@@ -214,6 +214,18 @@ struct Banners: View {
 
     var body: some View {
         VStack(spacing: 8) {
+            switch model.chat.upgrade {
+            case .appUpdate:
+                Banner(icon: "arrow.down.app", title: String(localized: "多多随身需要更新"),
+                       detail: String(localized: "家里的 ambient 已升级，这个版本连不上它"), action: String(localized: "更新")) {
+                    UIApplication.shared.open(AppLinks.signUp)
+                }
+            case .channelUpgrade:
+                Banner(icon: "arrow.up.circle", title: String(localized: "家里的 ambient 需要升级"),
+                       detail: String(localized: "按 ambient 部署文档 docs/deploy.md 的 Upgrading 一节升级"), action: nil, onAction: nil)
+            case nil:
+                EmptyView()
+            }
             if model.tailnet.backend_state == "NeedsLogin" || model.tailnet.backend_state == "NeedsMachineAuth" {
                 Banner(icon: "lock.shield", title: String(localized: "需要重新登录 Tailscale"), detail: nil, action: String(localized: "登录")) {
                     TailnetLogin.shared.start(model.tailnet)
@@ -235,7 +247,7 @@ struct Banners: View {
     }
 
     private var bannerShown: Bool {
-        model.tailnet.backend_state.hasPrefix("Needs") || model.chat.connection == .offline || model.chat.room?.daemonOK == false
+        model.chat.upgrade != nil || model.tailnet.backend_state.hasPrefix("Needs") || model.chat.connection == .offline || model.chat.room?.daemonOK == false
     }
 
     private var cachedText: String {
@@ -357,4 +369,9 @@ struct TryBanner: View {
         .padding(.vertical, 8)
         .background(Palette.brandWash)
     }
+}
+
+/// Links the app opens. The update banner opens the TestFlight sign-up form the README links.
+enum AppLinks {
+    static let signUp = URL(string: "https://docs.google.com/forms/d/e/1FAIpQLSfIUllzEsHU18l3q_K1SBo8FBx-GztPhzUKotWpp74mYAIH-A/viewform")!
 }

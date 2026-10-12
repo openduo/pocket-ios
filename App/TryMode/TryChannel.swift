@@ -7,22 +7,25 @@ import Foundation
 import PocketCore
 import PocketOpus
 
-/// The channel 先体验 talks to, inside the app. It answers the HTTP calls, the display socket and
-/// the ambient edge socket the way the ambient channel does (the same paths, bodies and frames as
-/// `Tools/mock-channel`), with `TryScript` as the brain. Uploads and the room log stay in memory.
+/// The channel 先体验 talks to, inside the app. It answers the HTTP calls and the `/live` socket
+/// the way the ambient channel does (the same paths, bodies and frames as `Tools/mock-channel`),
+/// with `TryScript` as the brain. Uploads and the room log stay in memory.
 final class TryChannel: @unchecked Sendable {
     static let shared = TryChannel()
 
     private let queue = DispatchQueue(label: "pocket.try")
     private var log: [ImlogEntry] = []
     private var files: [String: (data: Data, mime: String)] = [:]
-    private var voiceResults: [String: Data] = [:]
+    /// First 202 body per `Idempotency-Key`: a repeated key gets it again.
+    private var receipts: [String: Data] = [:]
     private var next = 0
-    private var seq = 0
+    private var lastSeq = 0
     private var greeted = false
-    private weak var display: DisplaySocket?
-    private weak var edge: EdgeSocket?
-    private var edgeListening = false
+    private weak var live: LiveSocket?
+    /// The app said `hello` on the socket: it holds the seat.
+    private var listening = false
+    /// The socket was opened with `audio=1`: it is a mouth, with or without the seat.
+    private var audio = false
 
     /// Pacing of a scripted turn, so the thinking and tool steps can be seen. Display only:
     /// a real turn's timing comes from the brain.
@@ -32,11 +35,12 @@ final class TryChannel: @unchecked Sendable {
         queue.sync {
             log = []
             files = [:]
-            voiceResults = [:]
+            receipts = [:]
             next = 0
-            seq = 0
+            lastSeq = 0
             greeted = false
-            edgeListening = false
+            listening = false
+            audio = false
         }
     }
 
@@ -55,23 +59,18 @@ final class TryChannel: @unchecked Sendable {
         case ("GET", "/api/state"):
             // No `limits`: uploads have no bound here (they stay in memory until exit).
             return json(200, ["room": TryMode.room, "room_name": roomName, "date": DayString.local(Date()),
-                              "daemon_ok": true, "cerebellum_ok": true, "imlog": encode(log)])
+                              "daemon_ok": true, "cerebellum_ok": true])
         case ("GET", "/api/imlog"):
+            if let since = query["since"].flatMap(Int.init) {
+                return json(200, ["room": TryMode.room, "entries": encode(log.filter { ($0.seq ?? 0) > since }), "seq": lastSeq])
+            }
             let date = query["date"] ?? ""
             let rows = log.filter { e in ThreadBuilder.parse(e.at).map { DayString.local($0) == date } ?? false }
             return json(200, ["room": TryMode.room, "date": date, "entries": encode(rows)])
-        case ("POST", "/api/inject"):
-            let o = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
-            let text = o["text"] as? String ?? ""
-            let atts = ((o["attachments"] as? [[String: Any]]) ?? []).map {
-                ChannelAttachment(name: $0["name"] as? String ?? "", mime: $0["mime"] as? String ?? "",
-                                  sha256: $0["sha256"] as? String)
-            }
-            let utt = newUtt()
-            let at = now()
-            append(ImlogEntry(at: at, kind: "typed", text: text, utt_id: utt, attachments: atts.isEmpty ? nil : atts))
-            answer(utt: utt)
-            return json(200, ["utt_id": utt, "at": at, "record_available": true])
+        case ("POST", "/api/messages"):
+            return message(headers: headers, body: body)
+        case ("POST", "/api/speech"):
+            return readAloud(body)
         case ("POST", "/api/upload"):
             let name = query["name"] ?? "file"
             let mime = headers["Content-Type"] ?? "application/octet-stream"
@@ -81,8 +80,6 @@ final class TryChannel: @unchecked Sendable {
         case ("GET", "/api/attachment"):
             guard let sha = query["sha256"], let f = files[sha] else { return json(404, ["error": "not_found"]) }
             return (200, f.data)
-        case ("POST", "/api/voice"):
-            return voice(headers: headers, body: body)
         default:
             return json(404, ["error": "not_found"])
         }
@@ -90,33 +87,80 @@ final class TryChannel: @unchecked Sendable {
 
     private var roomName: String { TryScript.en ? "Try it" : "体验" }
 
-    /// A voice note (`/api/voice`): length-prefixed Opus packets. The same id gets the first
-    /// result again, as the channel does for a retry.
-    private func voice(headers: [String: String], body: Data) -> (status: Int, body: Data) {
-        let id = headers["X-Voice-Id"] ?? ""
-        if let prev = voiceResults[id] { return (200, prev) }
-        var packets = 0, off = 0
-        let bytes = [UInt8](body)
-        while off + 2 <= bytes.count {
-            off += 2 + (Int(bytes[off]) | Int(bytes[off + 1]) << 8)
-            packets += 1
+    /// `POST /api/speech`: the scripted answer's bundled clip, in the voice message framing. A
+    /// text with no clip has nothing here to synthesize it.
+    private func readAloud(_ body: Data) -> (status: Int, body: Data) {
+        guard let o = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any], let text = o["text"] as? String else {
+            return json(400, ["error": "bad_body"])
         }
-        guard packets > 0, off == bytes.count else { return json(packets == 0 ? 422 : 400, ["voice_id": id, "error": "bad_body"]) }
-        let seconds = Double(packets * PocketConstants.frameMs) / 1000
-        let text = TryScript.voiceText(seconds: seconds)
-        let utt = newUtt()
-        let res = (try? JSONSerialization.data(withJSONObject: ["voice_id": id, "text": text, "utt_id": utt])) ?? Data()
-        voiceResults[id] = res
-        append(ImlogEntry(at: now(), kind: "typed", text: text, utt_id: utt, voice_source: headers["X-Voice-Source"]))
-        answer(utt: utt)
-        return (200, res)
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return json(422, ["error": "nothing_to_speak"]) }
+        let clips = TryScript.turns.map { ($0.text, $0.audio) } + [TryScript.ambientHello]
+        guard let clip = clips.first(where: { $0.0 == text })?.1, let packets = Self.packets(clip),
+              let framed = try? VoiceNote(source: .phone, packets: packets).body() else {
+            return json(503, ["error": "cerebellum_unavailable"])
+        }
+        return (200, framed)
+    }
+
+    /// `POST /api/messages`: typed JSON or a voice note (length-prefixed Opus packets), keyed by
+    /// `Idempotency-Key`. 202 at once; the row, the cleaned text and the answer follow on `/live`.
+    private func message(headers: [String: String], body: Data) -> (status: Int, body: Data) {
+        let key = (headers["Idempotency-Key"] ?? "").lowercased()
+        guard UUID(uuidString: key) != nil else { return json(400, ["error": "idempotency_key_required"]) }
+        if let prev = receipts[key] { return (202, prev) }
+        let at = now()
+        switch headers["Content-Type"] {
+        case "application/json":
+            let o = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
+            let text = o["text"] as? String ?? ""
+            let atts = ((o["attachments"] as? [[String: Any]]) ?? []).map {
+                ChannelAttachment(name: $0["name"] as? String ?? "", mime: $0["mime"] as? String ?? "",
+                                  sha256: $0["sha256"] as? String)
+            }
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !atts.isEmpty else {
+                return json(400, ["error": "bad_body", "message_id": key])
+            }
+            let receipt = accept(key, at: at)
+            // Delivered at once: the row, then the turn.
+            append(ImlogEntry(at: at, kind: "typed", text: text, utt_id: key, attachments: atts.isEmpty ? nil : atts))
+            answer(key)
+            return receipt
+        case PocketConstants.voiceContentType:
+            var packets = 0, off = 0
+            let bytes = [UInt8](body)
+            while off + 2 <= bytes.count {
+                off += 2 + (Int(bytes[off]) | Int(bytes[off + 1]) << 8)
+                packets += 1
+            }
+            guard packets > 0, off == bytes.count, ["passport", "phone"].contains(headers["X-Voice-Source"] ?? "") else {
+                return json(400, ["error": "bad_body", "message_id": key])
+            }
+            let receipt = accept(key, at: at)
+            let text = TryScript.voiceText(seconds: Double(packets * PocketConstants.frameMs) / 1000)
+            let source = headers["X-Voice-Source"]
+            // Recognition takes a moment; the row carries the text the brain receives.
+            queue.asyncAfter(deadline: .now() + Self.stepDelay) { [self] in
+                append(ImlogEntry(at: now(), kind: "typed", text: text, utt_id: key, voice_source: source))
+                frame(["type": "message", "id": key, "state": "cleaned", "text": text])
+                answer(key)
+            }
+            return receipt
+        default:
+            return json(415, ["error": "unsupported_media_type", "message_id": key])
+        }
+    }
+
+    private func accept(_ key: String, at: String) -> (status: Int, body: Data) {
+        let res = (try? JSONSerialization.data(withJSONObject: ["message_id": key, "at": at])) ?? Data()
+        receipts[key] = res
+        return (202, res)
     }
 
     // MARK: the brain
 
-    /// Plays the next scripted turn on the display socket: received, thinking, each tool call and
-    /// result, the answer, any file, idle. Spoken on the edge when ambient mode holds the seat.
-    private func answer(utt: String) {
+    /// Plays the next scripted turn on `/live`: received, thinking, each tool call and result,
+    /// the answer, any file, idle. Spoken when ambient mode holds the seat.
+    private func answer(_ id: String) {
         let turns = TryScript.turns
         let turn = turns[next]
         next = next + 1 < turns.count ? next + 1 : min(1, turns.count - 1)
@@ -125,38 +169,40 @@ final class TryChannel: @unchecked Sendable {
             t += dt
             queue.asyncAfter(deadline: .now() + t, execute: f)
         }
-        frame(["type": "turn", "utt_id": utt, "phase": "received"])
-        at(Self.stepDelay) { self.frame(["type": "turn", "utt_id": utt, "phase": "thinking"]) }
+        let ids = [id]
+        frame(["type": "turn", "message_ids": ids, "phase": "received"])
+        at(Self.stepDelay) { self.frame(["type": "turn", "message_ids": ids, "phase": "thinking"]) }
         for tool in turn.tools {
             let input = String(decoding: (try? JSONSerialization.data(withJSONObject: tool.input)) ?? Data(), as: UTF8.self)
-            at(Self.stepDelay) { self.frame(["type": "turn", "utt_id": utt, "phase": "tool", "label": tool.name, "input_summary": input]) }
-            at(Self.stepDelay) { self.frame(["type": "turn", "utt_id": utt, "phase": "tool", "label": tool.name + ToolLine.resultSuffix]) }
+            at(Self.stepDelay) { self.frame(["type": "turn", "message_ids": ids, "phase": "tool", "label": tool.name, "input_summary": input]) }
+            at(Self.stepDelay) { self.frame(["type": "turn", "message_ids": ids, "phase": "tool", "label": tool.name + ToolLine.resultSuffix]) }
         }
-        let speech = "c-" + utt
+        let speech = "c-" + id
         at(Self.stepDelay) {
+            self.frame(["type": "answer_final", "speech_id": speech, "message_ids": ids, "text": turn.text])
             let spoke = self.speak(id: speech, audio: turn.audio)
             self.append(ImlogEntry(at: self.now(), speaker: ImlogEntry.duoduoLabel, kind: "answer", text: turn.text,
-                                   utt_id: utt, unspoken: !spoke))
-            self.frame(["type": "answer_final", "speech_id": speech, "utt_id": utt, "text": turn.text])
+                                   unspoken: !spoke, message_ids: ids))
             if let f = turn.file, let url = Bundle.main.url(forResource: f.resource, withExtension: "md"),
                let data = try? Data(contentsOf: url) {
                 let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
                 self.files[sha] = (data, f.mime)
                 self.append(ImlogEntry(at: self.now(), speaker: ImlogEntry.duoduoLabel, kind: "answer", text: "",
-                                       attachments: [ChannelAttachment(name: f.name, mime: f.mime, sha256: sha)], unspoken: true))
+                                       attachments: [ChannelAttachment(name: f.name, mime: f.mime, sha256: sha)],
+                                       unspoken: true, message_ids: ids))
             }
-            self.frame(["type": "turn", "utt_id": utt, "phase": "idle"])
+            self.frame(["type": "turn", "message_ids": ids, "phase": "idle"])
         }
     }
 
+    /// Writes a row with the next cursor value (the channel's rule: never below the clock) and
+    /// sends it.
     private func append(_ e: ImlogEntry) {
+        var e = e
+        lastSeq = max(lastSeq + 1, Int(Date().timeIntervalSince1970 * 1000))
+        e.seq = lastSeq
         log.append(e)
-        frame(["type": "imlog_append", "entries": encode([e])])
-    }
-
-    private func newUtt() -> String {
-        seq += 1
-        return "try-\(seq)"
+        frame(["type": "row", "seq": lastSeq, "row": encode([e]).first ?? [:]])
     }
 
     private func now() -> String {
@@ -175,37 +221,40 @@ final class TryChannel: @unchecked Sendable {
         (status, (try? JSONSerialization.data(withJSONObject: o)) ?? Data())
     }
 
-    // MARK: display socket
+    // MARK: the /live socket
 
-    func openDisplay(_ s: DisplaySocket) { queue.sync { display = s } }
-    func closeDisplay(_ s: DisplaySocket) { queue.sync { if display === s { display = nil } } }
-    func displayOpen(_ s: DisplaySocket) -> Bool { queue.sync { display === s } }
-
-    private func frame(_ f: [String: Any]) {
-        display?.onFrame?(f)
-    }
-
-    // MARK: edge socket
-
-    func openEdge(_ s: EdgeSocket) {
+    /// The app opened `/live` (`since` when it holds a cursor): `meta`, the rows after the
+    /// cursor, then `ready`.
+    func openLive(_ s: LiveSocket, path: String) {
+        let items = URLComponents(string: path)?.queryItems ?? []
+        let since = items.first { $0.name == "since" }?.value.flatMap(Int.init)
+        let audioParam = items.first { $0.name == "audio" }?.value
         queue.async { [self] in
-            edge = s
-            edgeListening = false
-            edgeText(["type": "meta", "conn": "try-edge"])
-            edgeText(["type": "audio_params", "rate": AmbientEdge.rate])
+            live = s
+            listening = false
+            audio = audioParam == "1"
+            frame(["type": "meta", "conn": "try-live"])
+            if audio { frame(["type": "audio_params", "rate": AmbientEdge.rate]) }
+            if let since {
+                for e in log where (e.seq ?? 0) > since {
+                    frame(["type": "row", "seq": e.seq ?? 0, "row": encode([e]).first ?? [:]])
+                }
+            }
+            frame(["type": "ready", "seq": lastSeq, "turn": NSNull(), "messages": [[String: Any]](),
+                   "api": PocketConstants.clientAPIMajor])
         }
     }
 
-    func closeEdge(_ s: EdgeSocket) { queue.sync { if edge === s { edge = nil; edgeListening = false } } }
-    func edgeOpen(_ s: EdgeSocket) -> Bool { queue.sync { edge === s } }
+    func closeLive(_ s: LiveSocket) { queue.sync { if live === s { live = nil; listening = false; audio = false } } }
+    func liveOpen(_ s: LiveSocket) -> Bool { queue.sync { live === s } }
 
-    /// A text frame from the app's edge.
-    func edgeReceived(_ f: [String: Any]) {
+    /// A text frame from the app.
+    func liveReceived(_ f: [String: Any]) {
         queue.async { [self] in
             switch f["type"] as? String {
             case "hello":
-                edgeListening = true
-                edgeText(["type": "meta", "role": AmbientEdge.Role.master.rawValue, "state": "listening"])
+                listening = true
+                frame(["type": "meta", "role": AmbientEdge.Role.master.rawValue, "state": "listening"])
                 if !greeted {
                     greeted = true
                     let hello = TryScript.ambientHello
@@ -214,26 +263,25 @@ final class TryChannel: @unchecked Sendable {
                                       unspoken: !spoke))
                 }
             case "hush":
-                edgeText(["type": "stop_audio"])
+                frame(["type": "stop_audio"])
             default:
                 break
             }
         }
     }
 
-    private func edgeText(_ f: [String: Any]) {
-        guard let edge, let d = try? JSONSerialization.data(withJSONObject: f) else { return }
-        edge.onText?(String(decoding: d, as: UTF8.self))
+    private func frame(_ f: [String: Any]) {
+        guard let live, let d = try? JSONSerialization.data(withJSONObject: f) else { return }
+        live.onText?(String(decoding: d, as: UTF8.self))
     }
 
     /// Declares the speech and sends the bundled clip as 20 ms Opus packets, as the channel does
-    /// for TTS. Only when ambient mode is listening; a typed chat is not read aloud.
-    /// Returns whether it was spoken.
+    /// for TTS. Only to a mouth (`audio=1`), with ambient on or off. Returns whether it was spoken.
     @discardableResult
-    private func speak(id: String, audio: String) -> Bool {
-        guard edgeListening, let edge, let packets = Self.packets(audio) else { return false }
-        edgeText(["type": "speech", "speech_id": id])
-        for p in packets { edge.onBinary?(p) }
+    private func speak(id: String, audio clip: String) -> Bool {
+        guard audio, let live, let packets = Self.packets(clip) else { return false }
+        frame(["type": "speech", "speech_id": id])
+        for p in packets { live.onBinary?(p) }
         return true
     }
 

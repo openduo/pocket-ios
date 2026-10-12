@@ -55,6 +55,8 @@ struct PocketApp: App {
             AppLog.shared.log("scene_phase", ["phase": name])
             model.setActive(p == .active)
             if p == .active { PocketEngine.shared.appBecameActive() }
+            if p == .active || p == .background { AmbientController.shared.audioWantChanged(name) }
+            if p == .active { UIApplication.shared.isIdleTimerDisabled = AudioPreferences.keepAwake }
             if p == .background, !AmbientPolicy.continuesInBackground { AmbientController.shared.turnOff() }
             if p == .background { AnswerRefresh.schedule() }
         }
@@ -74,7 +76,8 @@ struct RootView: View {
 }
 
 /// Background App Refresh catch-up (the app has no push notifications): when iOS grants a
-/// refresh, read the room log and forward the newest answer the Passport has not had. iOS decides
+/// refresh, read the rows above the cursor (`GET /api/imlog?since=`) and forward the newest answer
+/// the Passport has not had. iOS decides
 /// when (and whether) it runs; the request asks for no earliest time, so there is no interval
 /// constant.
 enum AnswerRefresh {

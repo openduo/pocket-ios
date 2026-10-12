@@ -6,8 +6,8 @@
 //
 //   - the tsnet node (userspace, state in the app container);
 //   - native HTTP requests to the channel;
-//   - the display WebSocket (no hello) and the ambient edge WebSocket (hello,
-//     binary audio both ways).
+//   - the room's one `/live` WebSocket: conversation events always; with
+//     ambient mode on, the app's hello and binary audio both ways.
 //
 // Nothing listens on the phone: every call dials out through tsnet.
 package tsbridge

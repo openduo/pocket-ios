@@ -12,6 +12,8 @@ struct SettingsView: View {
     @AppStorage("ui.haptics") private var haptics = true
     @AppStorage(AmbientPolicy.backgroundKey) private var keepListening = true
     @AppStorage(AudioPreferences.headsetMicKey) private var headsetMic = false
+    @AppStorage(AudioPreferences.speakRepliesKey) private var speakReplies = true
+    @AppStorage(AudioPreferences.keepAwakeKey) private var keepAwake = false
 
     var body: some View {
         NavigationStack {
@@ -41,6 +43,10 @@ struct SettingsView: View {
                 }
                 Section {
                     row("speaker.wave.2", Palette.attention, String(localized: "环境模式的声音"), model.ambient.isOn ? model.ambient.route : String(localized: "扬声器"))
+                    Toggle(isOn: $speakReplies) { label("speaker.wave.2.bubble", Palette.secondary, String(localized: "播放语音回复")) }
+                        .onChange(of: speakReplies) { _, _ in AmbientController.shared.audioWantChanged("setting") }
+                    Toggle(isOn: $keepAwake) { label("sun.max", Palette.secondary, String(localized: "保持屏幕常亮")) }
+                        .onChange(of: keepAwake) { _, on in UIApplication.shared.isIdleTimerDisabled = on }
                     Toggle(isOn: $keepListening) { label("lock.iphone", Palette.secondary, String(localized: "离开 App 后继续听")) }
                     Toggle(isOn: $haptics) { label("hand.tap", Palette.secondary, String(localized: "按住说话的触感反馈")) }
                     Picker(selection: $headsetMic) {
@@ -50,9 +56,12 @@ struct SettingsView: View {
                         label("airpodspro", Palette.secondary, String(localized: "连着 AirPods 时用"))
                     }
                 } header: { Text(String(localized: "声音")) } footer: {
-                    Text(headsetMic
-                         ? String(localized: "按住说话时 AirPods 切到通话模式，正在放的音乐音质会变差，松手后恢复。")
-                         : String(localized: "按住说话用手机麦克风，AirPods 继续放声音，音质不变。"))
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(String(localized: "播放语音回复：App 在前台或环境模式开着时，多多的回复在这台手机上读出来；家里有设备在听时由那台设备播放。保持屏幕常亮：App 在前台时屏幕不自动锁定，手机可以放着当音箱用。"))
+                        Text(headsetMic
+                             ? String(localized: "按住说话时 AirPods 切到通话模式，正在放的音乐音质会变差，松手后恢复。")
+                             : String(localized: "按住说话用手机麦克风，AirPods 继续放声音，音质不变。"))
+                    }
                 }
                 Section(String(localized: "配件")) {
                     NavigationLink { PassportSheet(pushed: true) } label: {
@@ -377,7 +386,11 @@ final class ConnectionCheck: ObservableObject {
                 case .ok(let st):
                     var t = String(localized: "房间「\(st.roomName)」存在")
                     if st.daemonOK == true { t += String(localized: "，多多在线") } else if st.daemonOK == false { t += String(localized: "，多多暂时无法回复") }
-                    if st.cerebellumOK == false { t += String(localized: "；语音服务不可用") }
+                    if st.cerebellumMismatch {
+                        t += String(localized: "；小脑与 channel 版本不一致，需要两端同时升级")
+                    } else if st.cerebellumOK == false {
+                        t += String(localized: "；语音服务不可用")
+                    }
                     items[2] = .init(id: 2, text: t, state: .ok)
                 case .unknownRoom(let c):
                     rooms = c.rooms

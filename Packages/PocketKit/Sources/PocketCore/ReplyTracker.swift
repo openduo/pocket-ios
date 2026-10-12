@@ -9,23 +9,26 @@ import Foundation
 /// - `duoduo_said` carries a text delta; the same `speech_id` is one utterance. The tracker folds
 ///   deltas and emits the full text so far as a non-final REPLY (replace semantics: the device
 ///   shows the latest full text for a reply id).
-/// - `answer_final` carries the whole answer: a final REPLY, then REPLY_DONE.
-/// - `turn` frames (ble-protocol §9) become WORK while a reply is expected: `thinking` → 2, `tool` → 3.
-///   `idle` means the brain finished without an answer: WORK 0, then REPLY_DONE 0, and the wait
-///   ends. Other turn phases (`received`, `speaking`, `done`) are not work phases.
+/// - `answer_final` carries the whole answer and the messages its turn covered (`message_ids`): a
+///   final REPLY, then REPLY_DONE.
+/// - Correlation is by `message_ids`. The device waits on its press's message; an answer whose
+///   `message_ids` contains it is the reply and ends the wait. Any other answer is forwarded as
+///   usual (proactive answers alert too) and the wait goes on.
+/// - `turn` frames (ble-protocol §9) become WORK while a reply is expected: `received` naming the
+///   waited message → 1; after it, `thinking` → 2, `tool` → 3. `idle` naming the waited message
+///   means its turn ended without an answer: WORK 0, then REPLY_DONE 0, and the wait ends.
+/// - Partial text is not forwarded while a message waits: `duoduo_said` names no message, so a
+///   delta of another answer cannot be told apart.
 /// - Reactions (`kind: "reaction"`) are filler speech, not the answer; they are skipped.
-/// - After a wake, `catchUp` reads the room log for an answer that arrived while the socket was
-///   down. The server log is authoritative; an answer already sent is not sent again.
-/// - Pocket is one conversation: while notes wait, the first answer that arrives after they were
-///   sent is the reply, whatever `utt_id` it carries (the brain answers notes folded into one turn
-///   under the earliest note's id). Live, that is the first `answer_final` after `expect`; in the
-///   log, the first answer row after the earliest waiting note's typed row (`LogCorrelation`).
-///   Partial text is not forwarded while a note waits: a delta of an answer that began before the
-///   note cannot be told apart. Without an `utt_id` the log's newest unsent answer is the reply.
-///   With no reply expected, every answer is forwarded.
+/// - Rows (`rows`): an answer row whose answer was already sent live closes that entry; an answer
+///   row not seen live (its `answer_final` came while the socket was down) is delivered: the one
+///   naming the waited message, else the newest of the batch. Rows arrive once, above the
+///   client's cursor, so only live answers are remembered until their row arrives. This relies on
+///   the channel broadcasting `answer_final` before it persists the answer's row; a row first
+///   would deliver the answer twice.
 /// - Reply ids come from a counter that only grows (persisted in `Memory`), so each answer has
 ///   its own id and the device can keep several in order. Partials and the final of one speech
-///   share an id; an answer sent again (link ready, closing a wait) keeps the id it was sent with.
+///   share an id.
 public struct ReplyTracker {
     public struct Answer: Equatable, Codable {
         public var replyID: UInt32
@@ -33,17 +36,16 @@ public struct ReplyTracker {
         public var at: String?
     }
 
-    /// An answer already sent to the device as final.
+    /// An answer sent to the device from its live `answer_final`, kept until its row arrives.
     public struct Delivered: Equatable, Codable {
         /// Content fingerprint (`fingerprint`), so the live frame and the log row are one answer.
         public var text: UInt32
-        /// The utterance the answer names; nil for log rows without one and proactive messages.
-        public var utt: String?
-        /// 0 for entries carried over from builds that did not record it.
+        /// The answer's `message_ids`.
+        public var messages: [String]
         public var replyID: UInt32
     }
 
-    /// What survives a relaunch, so the last answer is not resent and ids keep growing.
+    /// What survives a relaunch, so an answer is not resent and ids keep growing.
     public struct Memory: Equatable, Codable {
         public var delivered: [Delivered] = []
         public var lastReplyID: UInt32 = 0
@@ -78,22 +80,31 @@ public struct ReplyTracker {
     private var foldText = ""
     private var foldReplyID: UInt32 = 0
 
-    /// The notes the device waits on (utt ids, oldest first), nil when it waits on nothing. An
-    /// empty list waits without an id: the next answer is the reply.
+    /// The messages the device waits on (oldest first), nil when it waits on nothing. An empty
+    /// list waits without an id (adopted after a relaunch): the next answer is the reply.
     public private(set) var waiting: [String]?
     public var awaiting: Bool { waiting != nil }
+    /// A waited message's turn was received; work frames are its turn's from now on.
+    private var received = false
 
     public init() {}
 
-    /// Starts a wait, or adds a note to the running one. Returns WORK 1 for the device
-    /// (ble-protocol §9: sent when the wait starts).
-    @discardableResult
-    public mutating func expect(uttID: String?) -> [PhoneMessage] {
-        waiting = (waiting ?? []) + (uttID.map { [$0] } ?? [])
-        return [.work(phase: .received, label: "")]
+    /// Starts a wait, or adds a message to the running one. WORK 1 follows when the channel
+    /// reports the message's delivery (`turn received`).
+    public mutating func expect(messageID: String?) {
+        waiting = (waiting ?? []) + (messageID.map { [$0] } ?? [])
     }
 
-    public mutating func stopExpecting() { waiting = nil }
+    public mutating func stopExpecting() {
+        waiting = nil
+        received = false
+    }
+
+    /// Whether an answer or turn with these `message_ids` is the waited one.
+    private func names(_ ids: [String]) -> Bool {
+        guard let w = waiting else { return false }
+        return w.isEmpty || ids.contains(where: w.contains)
+    }
 
     /// Stable 32-bit hash of a key (FNV-1a), never 0. Also names the app's per-room cache
     /// directory.
@@ -125,7 +136,7 @@ public struct ReplyTracker {
         return memory.lastReplyID
     }
 
-    /// Feeds one display-socket frame (already JSON-decoded). Returns messages for the device.
+    /// Feeds one `/live` frame (already JSON-decoded). Returns messages for the device.
     public mutating func handle(frame: [String: Any]) -> [PhoneMessage] {
         switch frame["type"] as? String {
         case "duoduo_said":
@@ -146,70 +157,95 @@ public struct ReplyTracker {
         case "answer_final":
             let text = frame["text"] as? String ?? ""
             if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return [] }
-            let speech = frame["speech_id"] as? String
-            var reuse: UInt32 = 0
-            if let speech, speech == foldID {
-                reuse = foldReplyID
+            let ids = LiveEvent.messageIDs(frame)
+            var id: UInt32 = 0
+            if let speech = frame["speech_id"] as? String, speech == foldID {
+                id = foldReplyID
                 foldID = ""; foldText = ""; foldReplyID = 0
             }
-            return accept(text: text, utt: frame["utt_id"] as? String, at: nil, reuse: reuse, closeOnRepeat: awaiting)
+            if id == PocketConstants.noReplyID { id = nextReplyID() }
+            memory.delivered.append(Delivered(text: Self.fingerprint(text), messages: ids, replyID: id))
+            return accept(text: text, at: nil, replyID: id, endsWait: names(ids))
         case "turn":
-            guard waiting != nil else { return [] }
+            guard let w = waiting else { return [] }
+            let ids = LiveEvent.messageIDs(frame)
             switch frame["phase"] as? String {
-            case "thinking": return [.work(phase: .thinking, label: "")]
-            case "tool": return [.work(phase: .tool, label: "")]
+            case "received":
+                guard !w.isEmpty, names(ids) else { return [] }
+                received = true
+                return [.work(phase: .received, label: "")]
+            case "thinking":
+                return received || w.isEmpty ? [.work(phase: .thinking, label: "")] : []
+            case "tool":
+                return received || w.isEmpty ? [.work(phase: .tool, label: "")] : []
             case "idle":
-                // An answer would already have ended the wait.
-                waiting = nil
+                // An answer naming the message would already have ended the wait.
+                guard names(ids) else { return [] }
+                stopExpecting()
                 return [.work(phase: .idle, label: ""), .replyDone(replyID: PocketConstants.noReplyID)]
-            default: return []
+            default:
+                return []
             }
         default:
             return []
         }
     }
 
-    /// Feeds room-log entries (`/api/state` `imlog`, oldest first). While notes wait, delivers the
-    /// first answer logged after they were sent; otherwise the newest answer if it was not sent
-    /// yet. Same test as `ImlogEntry.isAnswer`: reaction fillers (「我看看」) are not answers.
-    public mutating func catchUp(entries: [[String: Any]]) -> [PhoneMessage] {
-        // A row of files 多多 sent has no text; the Passport shows text, so it never counts.
-        let isAnswer = { (e: [String: Any]) in
-            (e["kind"] as? String) != "reaction"
-                && ((e["kind"] as? String) == "answer" || (e["speaker"] as? String) == ImlogEntry.duoduoLabel)
-                && !((e["text"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-        if let notes = waiting, !notes.isEmpty {
-            guard let i = LogCorrelation.firstAnswerIndex(after: Set(notes), in: entries, uttID: { $0["utt_id"] as? String },
-                                                          isAnswer: isAnswer),
-                  let text = entries[i]["text"] as? String else { return [] }
-            return accept(text: text, utt: entries[i]["utt_id"] as? String, at: entries[i]["at"] as? String,
-                          reuse: 0, closeOnRepeat: true)
-        }
-        guard let e = entries.last(where: isAnswer), let text = e["text"] as? String else { return [] }
-        return accept(text: text, utt: e["utt_id"] as? String, at: e["at"] as? String, reuse: 0, closeOnRepeat: false)
+    /// A waited message failed after it was sent to the brain (`brain_unreachable`): no answer
+    /// will come for it. Ends the wait when it was the last one.
+    public mutating func messageFailed(_ id: String) -> [PhoneMessage] {
+        guard var w = waiting, w.contains(id) else { return [] }
+        w.removeAll { $0 == id }
+        guard w.isEmpty else { waiting = w; return [] }
+        stopExpecting()
+        return [.replyDone(replyID: PocketConstants.noReplyID)]
     }
 
-    /// Sends an answer as final and ends any wait. An answer already sent is skipped, unless
-    /// `closeOnRepeat`: it is the reply a waiting device needs, so it goes again under the id it
-    /// was first sent with (the device replaces by id, so nothing new appears).
-    private mutating func accept(text: String, utt: String?, at: String?, reuse: UInt32, closeOnRepeat: Bool) -> [PhoneMessage] {
-        let fp = Self.fingerprint(text)
-        var id = reuse
-        var known = utt
-        if let i = memory.delivered.lastIndex(where: { $0.text == fp && ($0.utt == nil || utt == nil || $0.utt == utt) }) {
-            guard closeOnRepeat else { return [] }
-            let old = memory.delivered.remove(at: i)
-            if old.replyID != PocketConstants.noReplyID { id = old.replyID }
-            known = utt ?? old.utt
+    /// Feeds room-log rows above the client's cursor, oldest first: one live `row`, the replay
+    /// before `ready`, or a `GET /api/imlog?since=` batch. Same test as `ImlogEntry.isAnswer`;
+    /// a row of files has no text for the Passport and never counts.
+    public mutating func rows(_ entries: [ImlogEntry]) -> [PhoneMessage] {
+        var fresh: [ImlogEntry] = []
+        for e in entries where e.isAnswer && !e.shownText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let fp = Self.fingerprint(e.shownText)
+            if let i = memory.delivered.firstIndex(where: { $0.text == fp && Self.sameMessages($0.messages, e.message_ids) }) {
+                memory.delivered.remove(at: i)
+            } else {
+                fresh.append(e)
+            }
         }
-        if id == PocketConstants.noReplyID { id = nextReplyID() }
-        memory.delivered.append(Delivered(text: fp, utt: known, replyID: id))
-        let window = PocketConstants.catchUpWindowRows
-        if memory.delivered.count > window { memory.delivered.removeFirst(memory.delivered.count - window) }
-        // A repeat closing a wait has an older id; the newest answer stays the one to replay.
+        if let w = waiting, !w.isEmpty, let e = fresh.first(where: { names($0.message_ids ?? []) }) {
+            return accept(text: e.shownText, at: e.at, replyID: nextReplyID(), endsWait: true)
+        }
+        guard let e = fresh.last else { return [] }
+        return accept(text: e.shownText, at: e.at, replyID: nextReplyID(), endsWait: waiting?.isEmpty == true)
+    }
+
+    /// Live answers whose rows will never come above the cursor (a connection opened without
+    /// one starts at the room's newest row): forget them.
+    public mutating func forgetDelivered() { memory.delivered = [] }
+
+    /// `message_ids` match (a row without the field has none).
+    static func sameMessages(_ a: [String], _ b: [String]?) -> Bool { Set(a) == Set(b ?? []) }
+
+    /// `ready.turn` after a reconnect: when the open turn names a waited message, its delivery was
+    /// missed live; WORK 1 and the turn's current phase follow.
+    public mutating func restore(turn: LiveEvent.TurnSnapshot?) -> [PhoneMessage] {
+        guard let turn, let w = waiting, !w.isEmpty, !received, names(turn.messageIDs) else { return [] }
+        received = true
+        var out: [PhoneMessage] = [.work(phase: .received, label: "")]
+        switch turn.phase {
+        case "thinking": out.append(.work(phase: .thinking, label: ""))
+        case "tool": out.append(.work(phase: .tool, label: ""))
+        default: break
+        }
+        return out
+    }
+
+    /// Sends an answer as final; ends the wait when it is the waited one.
+    private mutating func accept(text: String, at: String?, replyID id: UInt32, endsWait: Bool) -> [PhoneMessage] {
         if id >= (memory.lastAnswer?.replyID ?? 0) { memory.lastAnswer = Answer(replyID: id, text: text, at: at) }
-        waiting = nil
+        if endsWait { stopExpecting() }
         return [.reply(replyID: id, final: true, text: text), .replyDone(replyID: id)]
     }
 }

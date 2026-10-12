@@ -9,6 +9,7 @@ probes on an iPhone XS Max and the Passport during development.
 | Name | Value | Kind | Basis |
 |---|---|---|---|
 | `protoMajor` / `protoMinor` | 1 / 2 | fixed | `docs/ble-protocol.md` §7; minor 1 adds WORK, minor 2 adds the APP_STATE language byte |
+| `clientAPIMajor` | 1 | fixed | the channel's client-API major this app speaks; a `ready` with a lower or absent `api` means the channel must be upgraded (`docs/ble-protocol.md` §3) |
 | PDU header | 4 bytes | fixed | `docs/ble-protocol.md` §6 |
 | Fragment payload | ATT value − 4 | derived at runtime | phone: `maximumWriteValueLength(.withoutResponse)`; 512-byte updates measured on an iPhone XS Max |
 | `maxMessageBytes` | 4096 | fixed (`docs/ble-protocol.md` §6) | the Passport keeps one reply; its measured minimum free heap is 26.9 KB, so 4 KiB is ~15 %. ≈1,300 CJK chars. Largest device message is one Opus packet (RFC 6716 max 1,275 B) + 4 |
@@ -17,15 +18,17 @@ probes on an iPhone XS Max and the Passport during development.
 | Opus packet buffer | 1,275 bytes | fixed | RFC 6716 maximum packet |
 | Opus application / signal | `OPUS_APPLICATION_VOIP` / `OPUS_SIGNAL_VOICE` | fixed, **no data** | input is speech only |
 | Opus decode buffer | 120 ms of samples | fixed | RFC 6716 longest frame |
-| `catchUpWindowRows` | 80 | fixed | channel `/api/state` returns `imlog.slice(-80)`; no older answer can come back through catch-up |
 | Reply id floor | current Unix time, seconds | derived | unique ids on a Passport across app reinstalls; INFO carries no stored id to seed from; u32 seconds last until 2106 |
 | `noReplyID` | 0 | fixed | REPLY_DONE meaning "stopped waiting" (`docs/ble-protocol.md` §7); tracker never emits 0 |
-| Reply wait limit | none | — | `docs/ble-protocol.md` §9: the wait ends on the answer, `turn idle` or a display socket that cannot be restored; a brain turn can take minutes (168 s observed) |
-| `uploadDeadline` | 25 s | tuning | iOS background task ≈30 s (Apple docs; `backgroundTimeRemaining` was unreadable right after a wake); margin to send RESULT |
+| Live answers kept for dedupe (`reply.memory.delivered`) | until the answer's row arrives | derived | rows arrive once, above the cursor; a connection opened without a cursor drops the list (its rows are below the room's cursor). No count constant |
+| Reply wait limit | none | — | `docs/ble-protocol.md` §9: the wait ends on the answer, `turn idle`, a failed delivery or a `/live` socket that cannot be restored; a brain turn can take minutes (168 s observed) |
+| `resultDeadline` | 25 s | tuning | PRESS_END → RESULT: the upload's 202, recognition and `message cleaned` over `/live`. Kept at the former upload bound until accept + recognition + judge latency is measured; same iOS background-task basis (≈30 s, margin to send RESULT). Past it RESULT is 3, or 4 with `/live` down |
+| `uploadDeadline` | 25 s | tuning | phone voice notes (upload until 202) and the attachment upload timeout. iOS background task ≈30 s (Apple docs; `backgroundTimeRemaining` was unreadable right after a wake); margin before suspension |
 | `uploadBackoffInitial` / `Max` | 0.5 s doubling to 4 s | tuning, **no data** | expected failure is a dead pooled connection after suspension, fixed by an immediate fresh dial; backoff only spaces repeats of a real outage |
 | Per-attempt timeout | remaining deadline | derived | no separate constant |
-| Retry policy | transport errors, 503, other 5xx retried with the same `X-Voice-Id`; 200 / 422 / 502 asr_failed / 4xx final | fixed | `docs/ble-protocol.md` §2 idempotency |
+| Retry policy | voice: transport errors, 503, other 5xx retried with the same `Idempotency-Key`; typed: transport errors resent on reconnect, any other non-202 status marks the message failed with no automatic retry, and the user's manual resend reuses the same key; 202 and 4xx final | fixed | `docs/ble-protocol.md` §2 idempotency |
 | `connectTimeout` | 8 s | tuning | measured on an iPhone XS Max: wake → socket 180-260 ms, worst stall 2.1 s; a BLE event gives ≈10 s of background time |
+| Row replay depth | unbounded | — | `/live?since=` and `/api/imlog?since=` return every row after the cursor, however old; cost is linear in the days missed |
 | `pingTimeout` | 3 s | tuning | measured latency max 2.1 s (iPhone XS Max) |
 | Keepalive interval | device side, 5 s, no cap (`docs/ble-protocol.md` §7) | device config | must stay below the ≈10 s background window a BLE notification grants, so the app stays awake while a reply is pending |
 | Tap threshold (Passport) | none in the app | — | `docs/ble-protocol.md` §7: a press of any length is speech; the device owns its 300 ms threshold |
@@ -33,8 +36,8 @@ probes on an iPhone XS Max and the Passport during development.
 | Max press length | none | — | memory is ~3 KB/s of Opus; presses longer than 15 s must work |
 | UI refresh | 1 s, foreground only | display | no effect on link or uploads |
 | Go HTTP transport timeouts | Go `DefaultTransport` defaults | inherited | only the dialer is replaced by tsnet |
-| Display and edge socket read limit | 1 MiB | fixed (Go) | the channel's own WebSocket `maxPayload` (`1 << 20`) |
-| Display socket close | immediate (`CloseNow`), no closing handshake | fixed | the socket being replaced has usually sat through a suspension; a graceful close waited on coder/websocket's 5 s timeouts for a peer that was gone |
+| `/live` socket read limit | 1 MiB | fixed (Go) | the channel's own WebSocket `maxPayload` (`1 << 20`) |
+| `/live` socket close | immediate (`CloseNow`), no closing handshake | fixed | the socket being replaced has usually sat through a suspension; a graceful close waited on coder/websocket's 5 s timeouts for a peer that was gone |
 | tsnet hostname | `duoduo-pocket` | fixed | node name shown in the tailnet admin console |
 | tsnet status timeout | 2 s | fixed (Go), **no data** | an in-process local-API call; bounds a status read for the UI only |
 | `ChannelSettings.defaultPort` / HTTPS default | 443 / on | default setting | `tailscale serve` publishes HTTPS on 443 |
@@ -46,15 +49,16 @@ probes on an iPhone XS Max and the Passport during development.
 
 | Name | Value | Kind | Basis |
 |---|---|---|---|
-| `AmbientEdge.playedReportMs` | 250 ms | fixed | the web edge's `PLAYED_REPORT_MS`; the watermark is also flushed when the playback queue drains |
+| `AmbientEdge.playedReportMs` | 250 ms | fixed | the web edge's `PLAYED_REPORT_MS`; the watermark is also flushed when the playback queue drains; sent with ambient on only |
+| Read aloud request | no deadline | — | the tsnet bring-up is bounded by `connectTimeout`; the stream ends when synthesis completes, the body breaks, or the user's next action (a press, 别说了, a new read, a `speech` declaration, leaving the front) cancels it |
+| Playback-only engine lifetime | first scheduled block → last block played | derived | no idle timer; see `docs/design/native-app.md` §7.8 for the alternatives kept in the backlog |
 | `AmbientEdge.rate` | 16 kHz | fixed | `docs/ble-protocol.md` §1; `audio_params.rate` is a notification, a different rate stops ambient |
-| `AmbientController.redialDelay` | 1 s | fixed | the web edge's reconnect pause (`transport.js`); each dial is bounded by `connectTimeout` |
-| `PocketEngine.redialDelay` | 1 s | fixed | same cadence for the display socket while the app is visible or ambient runs; Q9 shows the offline banner after the first failed attempt, so no delay constant |
-| Edge socket write timeout | 5 s | fixed (Go) | one frame on a live tailnet path takes milliseconds; worst measured stall 2.1 s (iPhone XS Max). Writes run on their own queue, so a stalled write never blocks capture |
+| `PocketEngine.redialDelay` | 1 s | fixed | the web edge's reconnect pause (`transport.js`), for the `/live` socket while the app is visible or ambient runs; each dial is bounded by `connectTimeout`; Q9 shows the offline banner after the first failed attempt, so no delay constant |
+| `/live` socket write timeout | 5 s | fixed (Go) | one frame on a live tailnet path takes milliseconds; worst measured stall 2.1 s (iPhone XS Max). Writes run on their own queue, so a stalled write never blocks capture |
 | Tailscale logout timeout | 10 s | fixed (Go) | bounds the Settings action on a dead control plane; display only |
 | `ConversationStore.historyScanDays` | 14 days | fixed, **no data** | days probed backwards per "load earlier" before showing 「N 天没有记录 · 继续找」; each probe is one small `GET /api/imlog` |
-| Working bubble after a reconnect | restored by the next `turn thinking` | channel | the channel repeats `turn thinking` every 2 s while the brain works (`bridge.turn_thinking_interval_ms`); no app timer |
-| History refresh on connect | newest cached day through today | derived | a fetched day replaces its file (server authority); no count constant |
+| Working bubble after a reconnect | `ready.turn` | channel | the open turn (or none) arrives with `ready`; the channel also repeats `turn thinking` every 2 s while the brain works (`bridge.turn_thinking_interval_ms`); no app timer |
+| Catch-up on connect | rows after the stored cursor (`since`) | derived | without a cursor (new room), the newest cached day through today by date; a fetched day replaces its file (server authority); no count constant |
 | Cache retention | everything | — | decision Q13 |
 | `ThreadBuilder.separatorGap` | 10 min | display | design §4.3 |
 | `ThreadBuilder.heardRunVisible` | 3 rows | display | decision Q6: runs longer than 3 fold |
@@ -66,7 +70,7 @@ probes on an iPhone XS Max and the Passport during development.
 | Upload size limit | `limits.upload_max_bytes` from `/api/state` | server | decision Q8; without the field (older channel) the app sends and maps 413 to 「文件太大」 |
 | Thread image width | 220 pt, height 0.5–1.4 × width | display | |
 | Toast duration | 2 s | display | |
-| Text resend after a lost response | possible duplicate | — | `/api/inject` has no idempotency key (voice notes do: `X-Voice-Id`); a text whose response was lost to a transport error is queued and sent again |
+| Text resend after a lost response | same message | — | every outbox item is sent under its fixed `Idempotency-Key`; a resend (lost response, relaunch, the user's manual resend of a failed message) gets the first receipt. A retry after a channel restart that forgot an accepted message with no row runs again, by the channel's rule |
 | Hold cancel boundary | the hold button's own frame | derived | the finger outside the 按住说话 bar arms cancel; the recording sheet redraws the bar at that frame, so the boundary is the visible button. No distance constant |
 | Composer mode default | hold-to-talk | fixed | product decision: voice first; the last chosen mode is stored under `composer.voice` |
 | Outbound attachment fetch | one `channel.file.download` per file, no retry, no size bound | channel | a failed fetch keeps the name without `sha256` (disabled card); the file size is whatever the brain queued |
@@ -79,4 +83,4 @@ probes on an iPhone XS Max and the Passport during development.
 | Background App Refresh interval | none (`earliestBeginDate` nil) | iOS | the system decides when to run; one request is kept pending, re-submitted on each move to the background and each run |
 | `BarLayout.sideGap` | 12 pt | display | space between the nav subtitle and a side item's content; the side items draw their glass capsule about 5 pt outside the content (iPhone 17 Pro Max, iOS 26) |
 | Thermal note | `ProcessInfo.ThermalState.serious` | display | the state at which Apple asks apps to reduce work; ambient shows a note, no automatic shutdown |
-| Answered-turn lookup | the 2 newest cached days | derived | a question before midnight answered after it |
+| Answered-turn lookup | the 2 newest cached days | derived | a question before midnight answered after it; matched by `message_ids` |

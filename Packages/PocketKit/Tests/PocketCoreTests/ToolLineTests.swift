@@ -72,7 +72,7 @@ final class ToolLineTests: XCTestCase {
 
 final class TurnStepTests: XCTestCase {
     private func tool(_ label: String, _ input: String? = nil) -> [String: Any] {
-        var f: [String: Any] = ["type": "turn", "utt_id": NSNull(), "phase": "tool", "label": label]
+        var f: [String: Any] = ["type": "turn", "message_ids": [String](), "phase": "tool", "label": label]
         if let input { f["input_summary"] = input }
         return f
     }
@@ -80,7 +80,7 @@ final class TurnStepTests: XCTestCase {
     func testChannelFramesMakeOneStepPerCall() {
         var t = TurnState()
         let t0 = Date(timeIntervalSince1970: 1000)
-        t.expect(uttID: "u1", now: t0)
+        t.expect(messageID: "u1", now: t0)
         // The channel's frame sequence: bash, its raw input, bash ✓, Notify, its input, Notify ✓.
         t.handle(frame: tool("bash"))
         t.handle(frame: tool("bash", #"{"command":"git log --oneline --decorate 2>&1 | head -40"}"#))
@@ -92,7 +92,7 @@ final class TurnStepTests: XCTestCase {
         t.handle(frame: tool("Notify ✓"))
         XCTAssertEqual(t.working?.steps.map(\.done), [true, true])
         XCTAssertFalse(t.working!.steps.map(\.line).joined().contains("{"))
-        t.handle(frame: ["type": "answer_final", "utt_id": "u1", "text": "好了"], now: t0.addingTimeInterval(12))
+        t.handle(frame: ["type": "answer_final", "message_ids": ["u1"], "text": "好了"], now: t0.addingTimeInterval(12))
         XCTAssertEqual(t.provisional.first?.trace.elapsed, 12)
         XCTAssertEqual(t.provisional.first?.trace.steps.count, 2)
         XCTAssertEqual(t.provisional.first?.trace.summaryLine, "任务已完成 · 2 步 · 12 秒")
@@ -108,7 +108,7 @@ final class TurnStepTests: XCTestCase {
 
     func testParallelCallsPairInOrderAndResultWithoutCall() {
         var t = TurnState()
-        t.expect(uttID: "u1")
+        t.expect(messageID: "u1")
         t.handle(frame: tool("Read", #"{"file_path":"a.md"}"#))
         t.handle(frame: tool("Read", #"{"file_path":"b.md"}"#))
         t.handle(frame: ["type": "turn", "phase": "thinking"])
@@ -123,7 +123,7 @@ final class TurnStepTests: XCTestCase {
 
     func testRepeatedEarlyFrameIsNotAStep() {
         var t = TurnState()
-        t.expect(uttID: "u1")
+        t.expect(messageID: "u1")
         XCTAssertTrue(t.handle(frame: tool("Bash")))
         XCTAssertFalse(t.handle(frame: tool("Bash")))
         XCTAssertEqual(t.working?.steps.count, 1)
@@ -133,7 +133,7 @@ final class TurnStepTests: XCTestCase {
     /// The ambient view shows `toolLabel`; it must be the working card's current step line.
     func testAmbientLabelIsTheCardsCurrentStepLine() {
         var t = TurnState()
-        t.expect(uttID: "u1")
+        t.expect(messageID: "u1")
         t.handle(frame: tool("Bash"))
         t.handle(frame: tool("Bash", #"{"command":"df -h /","description":"查看磁盘剩余空间，包括系统卷和数据卷的可用容量与快照占用"}"#))
         let line = t.working?.steps.last?.line

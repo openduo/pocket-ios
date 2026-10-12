@@ -355,6 +355,16 @@
         }
       }
     },
+    "保持屏幕常亮": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep screen on"
+          }
+        }
+      }
+    },
     "充电": {
       "localizations": {
         "en": {
@@ -915,6 +925,16 @@
         }
       }
     },
+    "多多随身需要更新": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "DuoDuo Pocket needs an update"
+          }
+        }
+      }
+    },
     "多多，%@": {
       "localizations": {
         "en": {
@@ -945,6 +965,26 @@
         }
       }
     },
+    "家里的 ambient 已升级，这个版本连不上它": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your ambient at home was upgraded; this version can't talk to it"
+          }
+        }
+      }
+    },
+    "家里的 ambient 需要升级": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your ambient at home needs an upgrade"
+          }
+        }
+      }
+    },
     "对话": {
       "localizations": {
         "en": {
@@ -971,6 +1011,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Export logs"
+          }
+        }
+      }
+    },
+    "小脑与 channel 版本不一致，需要两端同时升级": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The cerebellum and the channel run different versions; upgrade both together"
           }
         }
       }
@@ -1427,6 +1477,16 @@
         }
       }
     },
+    "按 ambient 部署文档 docs/deploy.md 的 Upgrading 一节升级": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Follow the Upgrading section of ambient's docs/deploy.md"
+          }
+        }
+      }
+    },
     "按住下方的按钮说话": {
       "localizations": {
         "en": {
@@ -1483,6 +1543,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Button held"
+          }
+        }
+      }
+    },
+    "播放语音回复": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Play spoken replies"
+          }
+        }
+      }
+    },
+    "播放语音回复：App 在前台或环境模式开着时，多多的回复在这台手机上读出来；家里有设备在听时由那台设备播放。保持屏幕常亮：App 在前台时屏幕不自动锁定，手机可以放着当音箱用。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Play spoken replies: while the app is open or ambient mode is on, DuoDuo's replies are spoken on this phone; when a device at home is listening, that device speaks them. Keep screen on: while the app is open the screen does not lock, so the phone can stand as a speaker."
           }
         }
       }
@@ -1577,12 +1657,52 @@
         }
       }
     },
+    "更新": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update"
+          }
+        }
+      }
+    },
     "最近一次按键 %@": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Last press %@"
+          }
+        }
+      }
+    },
+    "朗读": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Read aloud"
+          }
+        }
+      }
+    },
+    "朗读中断了": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reading aloud was cut off"
+          }
+        }
+      }
+    },
+    "朗读失败（%lld）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reading aloud failed (%lld)"
           }
         }
       }
@@ -2387,6 +2507,16 @@
         }
       }
     },
+    "语音合成失败": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Speech synthesis failed"
+          }
+        }
+      }
+    },
     "语音服务暂不可用": {
       "localizations": {
         "en": {
@@ -2493,6 +2623,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Rooms on this channel:"
+          }
+        }
+      }
+    },
+    "这条太长，读不了": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This message is too long to read aloud"
+          }
+        }
+      }
+    },
+    "这条没有能读的文字": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing in this message can be read aloud"
           }
         }
       }
@@ -2915,6 +3065,16 @@
           "stringUnit": {
             "state": "translated",
             "value": ", DuoDuo can't reply right now"
+          }
+        }
+      }
+    },
+    "；小脑与 channel 版本不一致，需要两端同时升级": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "; the cerebellum and the channel run different versions, upgrade both together"
           }
         }
       }

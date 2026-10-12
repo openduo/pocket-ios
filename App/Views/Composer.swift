@@ -16,6 +16,9 @@ struct Composer: View {
     @State private var showCamera = false
     @State private var showFiles = false
 
+    /// The hold-to-talk bar shows in voice mode, except while ambient mode is on.
+    private var holdToTalk: Bool { model.voiceInput && !model.ambient.isOn }
+
     var body: some View {
         VStack(spacing: 8) {
             if let q = model.quote {
@@ -35,16 +38,20 @@ struct Composer: View {
             }
             if !model.chips.isEmpty { ChipsRow() }
             HStack(alignment: .bottom, spacing: 8) {
-                Button {
-                    model.voiceInput.toggle()
-                    focused = !model.voiceInput
-                } label: {
-                    Image(systemName: model.voiceInput ? "keyboard" : "mic")
+                // While ambient mode is on the room already hears the phone; hold-to-talk is
+                // off and only text input remains. The stored mode comes back with ambient off.
+                if !model.ambient.isOn {
+                    Button {
+                        model.voiceInput.toggle()
+                        focused = !model.voiceInput
+                    } label: {
+                        Image(systemName: model.voiceInput ? "keyboard" : "mic")
+                    }
+                    .buttonStyle(CircleButtonStyle(fill: Palette.chip, fg: Palette.secondary, size: 38))
+                    .accessibilityLabel(model.voiceInput ? String(localized: "切换到键盘输入") : String(localized: "切换到按住说话"))
                 }
-                .buttonStyle(CircleButtonStyle(fill: Palette.chip, fg: Palette.secondary, size: 38))
-                .accessibilityLabel(model.voiceInput ? String(localized: "切换到键盘输入") : String(localized: "切换到按住说话"))
 
-                if model.voiceInput {
+                if holdToTalk {
                     HoldToTalkBar()
                 } else {
                     TextField(String(localized: "发消息"), text: $model.draftText, axis: .vertical)
@@ -74,7 +81,7 @@ struct Composer: View {
                 .accessibilityLabel(String(localized: "添加照片或文件"))
 
                 // In hold-to-talk mode only attachments can be sent; a hidden draft stays a draft.
-                if !model.chips.isEmpty || (!model.voiceInput && !model.draftText.isEmpty) {
+                if !model.chips.isEmpty || (!holdToTalk && !model.draftText.isEmpty) {
                     Button { model.send() } label: { Image(systemName: "arrow.up") }
                         .buttonStyle(CircleButtonStyle(fill: Palette.brand, fg: Palette.onBrand, size: 38))
                         .disabled(!model.canSend)
@@ -261,7 +268,7 @@ struct HoldToTalkBar: View {
     private func began(_ age: TimeInterval) {
         HoldTiming.shared.begin(eventAge: age)
         guard model.voiceAvailable else {
-            model.toast = String(localized: "语音服务暂不可用")
+            model.toast = model.voiceUnavailableText
             return
         }
         started = Date()

@@ -2,7 +2,7 @@
 # Copyright 2026 openduo
 # SPDX-License-Identifier: FSL-1.1-Apache-2.0
 
-# Binds Bridge/tsbridge (tsnet, native requests, display and edge sockets) into
+# Binds Bridge/tsbridge (tsnet, native requests, the /live socket) into
 # Vendor/Tsbridge.xcframework with gomobile. Needs Go and gomobile/gobind in
 # PATH or ~/go/bin. GOPROXY may be overridden for the local network.
 set -eu

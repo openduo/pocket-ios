@@ -11,6 +11,15 @@ final class AmbientEdgeTests: XCTestCase {
 
     private func types(_ a: [AmbientEdge.Action]) -> [String] { sends(a).compactMap { $0["type"] as? String } }
 
+    /// An edge with ambient on: it said `hello`, so it reports playback (live mode).
+    private func seated() -> AmbientEdge {
+        var e = AmbientEdge(room: "r")
+        e.socketOpened()
+        _ = e.frame(["type": "meta", "conn": "c1"])
+        _ = e.packetEncoded()
+        return e
+    }
+
     func testHelloWaitsForTheFirstPacketAndTheConn() {
         var e = AmbientEdge(room: "study")
         e.aec = true
@@ -88,7 +97,7 @@ final class AmbientEdgeTests: XCTestCase {
     }
 
     func testPlayedIsAWatermarkThrottledAndFlushedAtDrain() {
-        var e = AmbientEdge()
+        var e = seated()
         XCTAssertEqual(e.frame(["type": "speech", "speech_id": "c-1"]), [.resetDecoder])
         var gens: [Int] = []
         for _ in 0..<20 {
@@ -107,7 +116,7 @@ final class AmbientEdgeTests: XCTestCase {
     }
 
     func testStopAudioCutsAnswersButNotFillers() {
-        var e = AmbientEdge()
+        var e = seated()
         _ = e.frame(["type": "speech", "speech_id": "s12"])
         guard case .play(_, let g) = e.binary(Data([1])).first else { return XCTFail() }
         e.scheduled(gen: g)
@@ -129,7 +138,7 @@ final class AmbientEdgeTests: XCTestCase {
     }
 
     func testOldSpeechTailIsNotCreditedToTheNext() {
-        var e = AmbientEdge()
+        var e = seated()
         _ = e.frame(["type": "speech", "speech_id": "c-1"])
         guard case .play(_, let g1) = e.binary(Data([1])).first else { return XCTFail() }
         e.scheduled(gen: g1)
@@ -163,5 +172,150 @@ final class AmbientEdgeTests: XCTestCase {
         e.scheduled(gen: g)
         XCTAssertEqual(e.socketClosed(), [.clearPlayback, .resetDecoder])
         XCTAssertFalse(e.speaking)
+    }
+
+    /// A press stops what is playing at once, fillers too, and reports it `interrupted`.
+    func testPressStopsPlaybackAndReportsTheSpeech() {
+        var e = AmbientEdge(room: "r")
+        e.socketOpened()
+        _ = e.frame(["type": "meta", "conn": "c1"])
+        _ = e.packetEncoded()
+        _ = e.frame(["type": "speech", "speech_id": "c-1"])
+        guard case .play(_, let g) = e.binary(Data([1])).first else { return XCTFail() }
+        e.scheduled(gen: g)
+        let a = e.pressBegan()
+        XCTAssertEqual(a, [.send(["type": "mute", "on": false]), .clearPlayback, .resetDecoder,
+                           .send(["type": "interrupted", "speech_id": "c-1"])])
+        XCTAssertFalse(e.speaking)
+        // The cut block's completion is stale: no played for it.
+        XCTAssertTrue(e.played(gen: g, ms: 40).isEmpty)
+        // Nothing playing: a press reports nothing.
+        _ = e.pressEnded()
+        XCTAssertEqual(types(e.pressBegan()), ["mute"])
+    }
+
+    /// While a press is held every speech that arrives is dropped and reported; its audio is
+    /// discarded without a warning. After the press, speech plays again.
+    func testSpeechDuringAPressIsDroppedAndReported() {
+        var e = seated()
+        _ = e.pressBegan()
+        let a = e.frame(["type": "speech", "speech_id": "s4"])
+        XCTAssertEqual(sends(a), [["type": "interrupted", "speech_id": "s4"]])
+        XCTAssertTrue(e.binary(Data([1])).isEmpty)
+        XCTAssertEqual(sends(e.frame(["type": "speech", "speech_id": "c-5"])), [["type": "interrupted", "speech_id": "c-5"]])
+        XCTAssertTrue(e.binary(Data([1])).isEmpty)
+        XCTAssertFalse(e.speaking)
+        _ = e.pressEnded()
+        // The dropped speech's late audio stays dropped; the next speech plays.
+        XCTAssertTrue(e.binary(Data([1])).isEmpty)
+        XCTAssertEqual(e.frame(["type": "speech", "speech_id": "c-6"]), [.resetDecoder])
+        guard case .play = e.binary(Data([1])).first else { return XCTFail() }
+    }
+
+    // MARK: message mode (ambient off) and read aloud
+
+    /// A declaration stops nothing: the decoder keeps its state and audio already received plays
+    /// first, so speeches play in the order they were declared.
+    func testDeclarationDoesNotCutAudioAlreadyReceived() {
+        var e = AmbientEdge()
+        _ = e.frame(["type": "speech", "speech_id": "c-1"])
+        guard case .play(_, let g1) = e.binary(Data([1])).first else { return XCTFail() }
+        e.scheduled(gen: g1)
+        // A new Opus stream: the decoder is reset, nothing buffered is cleared.
+        XCTAssertEqual(e.frame(["type": "speech", "speech_id": "c-2"]), [.resetDecoder])
+        guard case .play(_, let g2) = e.binary(Data([2])).first else { return XCTFail() }
+        XCTAssertNotEqual(g1, g2)
+        XCTAssertEqual(e.current, "c-2")
+    }
+
+    /// `stop_audio` for the current speech, or naming none, clears every buffered speech.
+    func testStopAudioClearsEveryBufferedSpeech() {
+        var e = AmbientEdge()
+        _ = e.frame(["type": "speech", "speech_id": "c-1"])
+        _ = e.binary(Data([1]))
+        _ = e.frame(["type": "speech", "speech_id": "c-2"])
+        _ = e.binary(Data([2]))
+        // A stop for the earlier id is stale.
+        XCTAssertTrue(e.frame(["type": "stop_audio", "speech_id": "c-1"]).isEmpty)
+        XCTAssertEqual(e.frame(["type": "stop_audio", "speech_id": "c-2"]), [.clearPlayback, .resetDecoder])
+        _ = e.frame(["type": "speech", "speech_id": "c-3"])
+        XCTAssertEqual(e.frame(["type": "stop_audio"]), [.clearPlayback, .resetDecoder])
+        // With nothing current, a stop naming a speech is stale; one naming none still clears.
+        XCTAssertTrue(e.frame(["type": "stop_audio", "speech_id": "c-3"]).isEmpty)
+        XCTAssertEqual(e.frame(["type": "stop_audio"]), [.clearPlayback, .resetDecoder])
+    }
+
+    /// Ambient off: the channel takes no playback report, so none is sent.
+    func testMessageModeSendsNoReports() {
+        var e = AmbientEdge()
+        _ = e.frame(["type": "speech", "speech_id": "c-1"])
+        guard case .play(_, let g) = e.binary(Data([1])).first else { return XCTFail() }
+        e.scheduled(gen: g)
+        XCTAssertTrue(e.played(gen: g, ms: 300).isEmpty)
+        _ = e.frame(["type": "speech", "speech_id": "c-2"])
+        guard case .play(_, let g2) = e.binary(Data([1])).first else { return XCTFail() }
+        e.scheduled(gen: g2)
+        // A press stops and drops locally, and says nothing.
+        XCTAssertEqual(e.pressBegan(), [.clearPlayback, .resetDecoder])
+        XCTAssertEqual(e.frame(["type": "speech", "speech_id": "c-3"]), [.clearPlayback, .resetDecoder])
+        XCTAssertTrue(e.binary(Data([1])).isEmpty)
+    }
+
+    /// A read stops the reply that plays and, with ambient on, reports it; the reply's late audio
+    /// is discarded quietly.
+    func testReadStopsTheReplyAndReportsItWithAmbientOn() {
+        var e = seated()
+        _ = e.frame(["type": "speech", "speech_id": "c-1"])
+        guard case .play(_, let g) = e.binary(Data([1])).first else { return XCTFail() }
+        e.scheduled(gen: g)
+        XCTAssertEqual(e.readBegan(), [.clearPlayback, .resetDecoder, .send(["type": "interrupted", "speech_id": "c-1"])])
+        XCTAssertTrue(e.reading)
+        XCTAssertTrue(e.binary(Data([1])).isEmpty)
+        XCTAssertTrue(e.played(gen: g, ms: 40).isEmpty)
+        // A stop_audio for the stopped reply does not touch the read.
+        XCTAssertTrue(e.frame(["type": "stop_audio", "speech_id": "c-1"]).isEmpty)
+        XCTAssertTrue(e.frame(["type": "stop_audio"]).isEmpty)
+        // Neither does the socket closing.
+        XCTAssertTrue(e.socketClosed().isEmpty)
+        XCTAssertTrue(e.reading)
+    }
+
+    /// A read started before the reply's first packet still reports it: the channel waits for
+    /// that speech, and its packets will be dropped.
+    func testReadBeforeTheFirstPacketReportsTheReply() {
+        var e = seated()
+        _ = e.frame(["type": "speech", "speech_id": "c-1"])
+        XCTAssertEqual(e.readBegan(), [.clearPlayback, .resetDecoder, .send(["type": "interrupted", "speech_id": "c-1"])])
+        XCTAssertTrue(e.binary(Data([1])).isEmpty)
+    }
+
+    func testReadWithAmbientOffReportsNothing() {
+        var e = AmbientEdge()
+        _ = e.frame(["type": "speech", "speech_id": "c-1"])
+        guard case .play(_, let g) = e.binary(Data([1])).first else { return XCTFail() }
+        e.scheduled(gen: g)
+        XCTAssertEqual(e.readBegan(), [.clearPlayback, .resetDecoder])
+        // Nothing playing: a second read only stops the first.
+        XCTAssertEqual(e.readBegan(), [.stopRead, .clearPlayback])
+        e.readEnded()
+        XCTAssertFalse(e.reading)
+    }
+
+    /// The live exchange goes first: a declaration or a press stops a local read.
+    func testDeclarationAndPressStopTheRead() {
+        var e = AmbientEdge()
+        _ = e.readBegan()
+        XCTAssertEqual(e.frame(["type": "speech", "speech_id": "c-1"]), [.stopRead, .clearPlayback, .resetDecoder])
+        XCTAssertFalse(e.reading)
+        guard case .play = e.binary(Data([1])).first else { return XCTFail() }
+
+        var p = seated()
+        _ = p.readBegan()
+        XCTAssertEqual(p.pressBegan(), [.send(["type": "mute", "on": false]), .stopRead, .clearPlayback])
+        XCTAssertFalse(p.reading)
+
+        var h = AmbientEdge()
+        _ = h.readBegan()
+        XCTAssertEqual(h.hush().first, .stopRead)
     }
 }

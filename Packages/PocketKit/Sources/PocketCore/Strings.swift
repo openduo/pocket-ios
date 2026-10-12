@@ -11,7 +11,7 @@ public enum PocketStrings {
     static func t(_ zh: String, _ en: String) -> String { language == .en ? en : zh }
 
     static func delivered() -> String { t("已送达", "Delivered") }
-    static func deliveredNotLogged() -> String { t("已送达，记录未保存", "Delivered, not saved in the log") }
+    static func notDelivered() -> String { t("没送到多多", "Not delivered to DuoDuo") }
     static func spoken() -> String { t("已播报", "Spoken") }
     static func partlySpoken() -> String { t("只播了一部分", "Partly spoken") }
     static func taskDone() -> String { t("任务已完成", "Done") }
