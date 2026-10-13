@@ -40,8 +40,8 @@ struct AmbientSnapshot: Equatable {
 ///
 /// The phone is a mouth whenever its connection was opened with `audio=1`: replies play here with
 /// ambient off too (the room is then in message mode, and nothing is reported back). The switch
-/// is the 播放语音回复 setting, asked for while the app is in front or ambient mode runs, so no
-/// reply plays from a pocket. A change is a new connection from the cursor. A read aloud
+/// is on while ambient mode runs, and otherwise the 播放语音回复 setting while the app is in front,
+/// so no reply plays from a pocket. A change is a new connection from the cursor. A read aloud
 /// (`POST /api/speech`) plays here as well, outside the room's speech.
 ///
 /// The app holds one `/live` connection, owned here. Its conversation frames go to
@@ -130,6 +130,12 @@ final class AmbientController: @unchecked Sendable {
             failure = nil
             // The ambient engine replaces the playback-only one: a read in progress ends here.
             stopRead()
+            // Ambient mode always asks `audio=1`: replace a connection opened without it before
+            // the new edge says `hello` on it.
+            if liveAudio != nil, liveAudio != wantsAudio {
+                liveReplaced()
+                live.close()
+            }
             newEdge()
             AppLog.shared.log("ambient_on")
             startAudio()
@@ -248,11 +254,12 @@ final class AmbientController: @unchecked Sendable {
         try live.open(path: ChannelPaths.live(room: s.room, since: since, audio: audio), timeout: timeout)
     }
 
-    /// The `audio` switch a connection opened now asks for: the setting, while the app is in
-    /// front or ambient mode runs. Not while the audio session is interrupted: the phone cannot
-    /// play during a call, so it must not count as a mouth.
+    /// The `audio` switch a connection opened now asks for: always while ambient mode runs (it is
+    /// a voice in the room; the user mutes it there), else the setting while the app is in front.
+    /// Not while the audio session is interrupted: the phone cannot play during a call, so it
+    /// must not count as a mouth.
     private var wantsAudio: Bool {
-        AudioPreferences.speakReplies && !interrupted && (on || AppPhase.value != "background")
+        !interrupted && (on || (AudioPreferences.speakReplies && AppPhase.value != "background"))
     }
 
     /// Whether the open connection's `audio` switch is still the one wanted. A connection that is

@@ -323,7 +323,7 @@ a previously paired device (forget it in iOS Settings › Bluetooth).
 ### 4.9 Settings (screens `settings`)
 
 Grouped list. Editing host/room/port/TLS reruns the onboarding step-2 check inline before saving.
-Sound: 播放语音回复 (default on; the `/live` `audio` switch, §7.1), 保持屏幕常亮 (default off: while
+Sound: 播放语音回复 (default off; with ambient mode off, the `/live` `audio` switch, §7.1), 保持屏幕常亮 (default off: while
 the app is in front the screen does not lock, so the phone can stand out as a speaker), 连着
 AirPods 时用 手机麦克风 (default) / AirPods 麦克风 (§4.6.1).
 Tailscale row: state, node name, IP, 退出登录 (confirm). Diagnostics: export logs (app log +
@@ -398,11 +398,11 @@ Gaps found in the current channel (branch `feature/pocket-voice-note`):
                                     hello while ambient is on        reply is pending, or ambient runs
 ```
 
-- `audio` is the phone's mouth switch, fixed for the connection's life: `1` while the
-  播放语音回复 setting is on and the app is in front or ambient mode runs, else `0`. A change of
-  either (the setting, the app entering or leaving the background) replaces the connection from the
-  cursor; `PocketEngine` treats a connection opened with the other switch as stale. Turning the
-  setting off also stops local playback at once.
+- `audio` is the phone's mouth switch, fixed for the connection's life: `1` while ambient
+  mode runs, or while the 播放语音回复 setting is on and the app is in front, else `0`. A change
+  (the setting, ambient mode, the app entering or leaving the background) replaces the connection from the
+  cursor; `PocketEngine` treats a connection opened with the other switch as stale. With ambient mode
+  off, turning the setting off also stops local playback at once.
 - Live mode: ambient on, the phone holds the capture seat; the room's speech comes here only, paced
   by this phone's `played`. Message mode: ambient off (no capture owner in the room); every
   audio-on surface receives the room's speech as fast as it is synthesized, the channel counts a

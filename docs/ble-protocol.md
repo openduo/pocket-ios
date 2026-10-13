@@ -44,7 +44,7 @@ It carries:
   incompatible change; the app needs 1 (`clientAPIMajor`).
 
 Speech. `/live` takes `audio=0|1`, the surface's mouth switch for the connection's life; the app
-sends `1` while 播放语音回复 is on and the app is in front or ambient mode runs (not while an
+sends `1` while ambient mode runs, or while 播放语音回复 is on and the app is in front (not while an
 interruption such as a call holds ambient mode's audio session), and reconnects from the cursor when
 that changes. An audio-on connection gets `audio_params` after `meta`. With ambient
 on (`hello`, the capture seat) the room is in live mode: speech comes to the phone paced by its
