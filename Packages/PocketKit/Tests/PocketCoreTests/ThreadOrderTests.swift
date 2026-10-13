@@ -132,6 +132,18 @@ final class ThreadOrderTests: XCTestCase {
         XCTAssertEqual(turn.working?.phase, .thinking)
     }
 
+    /// `ready` during or after a playback is no work: it must not leave a 「在想」 bubble.
+    func testRestoreShowsABubbleOnlyForWork() {
+        for phase in ["speaking", "done", "idle", "streaming"] {
+            var turn = TurnState()
+            turn.restore(.init(messageIDs: [], phase: phase))
+            XCTAssertNil(turn.working, phase)
+        }
+        var turn = TurnState()
+        turn.restore(.init(messageIDs: [], phase: "thinking"))
+        XCTAssertEqual(turn.working?.phase, .thinking)
+    }
+
     func testIdleOfAnEarlierTurnKeepsAJustSentNote() {
         var turn = TurnState()
         turn.handle(frame: ["type": "turn", "phase": "received", "message_ids": ["u2"]])
