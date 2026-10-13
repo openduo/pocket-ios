@@ -228,8 +228,12 @@ final class AppModel: ObservableObject {
 
     // MARK: composer
 
+    /// The hold-to-talk bar shows in voice mode, except while ambient mode is on: then the text
+    /// field shows whatever the stored mode.
+    var holdToTalk: Bool { voiceInput && !ambient.isOn }
+
     /// The text field is hidden in hold-to-talk mode, so its draft is neither counted nor sent.
-    private var sendableText: String { voiceInput ? "" : draftText.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var sendableText: String { holdToTalk ? "" : draftText.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var canSend: Bool {
         let hasText = !sendableText.isEmpty
@@ -241,7 +245,7 @@ final class AppModel: ObservableObject {
         guard canSend else { return }
         let text = quote.map { UserQuote.compose(quote: $0, text: sendableText) } ?? sendableText
         let atts = chips.compactMap { if case .uploaded(let a) = $0.state { a } else { nil } }
-        if !voiceInput { draftText = "" }
+        if !holdToTalk { draftText = "" }
         quote = nil
         chips = []
         sentCount += 1
