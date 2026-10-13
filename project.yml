@@ -27,6 +27,7 @@ targets:
     sources:
       # Includes App/PrivacyInfo.xcprivacy, which xcodegen puts in the Resources phase.
       - path: App
+      - path: Shared
       # Shown in Settings › 关于多多随身 › 开源许可.
       - path: LICENSE
         buildPhase: resources
@@ -41,6 +42,11 @@ targets:
         product: PocketCore
       - package: PocketKit
         product: PocketOpus
+      - target: DuoduoShare
+    entitlements:
+      path: App/DuoduoPocket.entitlements
+      properties:
+        com.apple.security.application-groups: [group.$(POCKET_BUNDLE_ID)]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(POCKET_BUNDLE_ID)
@@ -73,6 +79,11 @@ targets:
         NSCameraUsageDescription: 在对话中拍照上传需要使用相机。
         NSPhotoLibraryUsageDescription: 在对话中上传图片需要访问照片。
         NSLocalNetworkUsageDescription: 内置的 Tailscale 节点会探测局域网以建立直连。
+        # The share extension's hand-off (Shared/ShareInbox.swift).
+        PocketAppGroup: group.$(POCKET_BUNDLE_ID)
+        CFBundleURLTypes:
+          - CFBundleURLName: $(POCKET_BUNDLE_ID)
+            CFBundleURLSchemes: [duoduopocket]
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
@@ -82,6 +93,42 @@ targets:
         # third-party cryptography on the French store, so no document applies: `false`.
         # `true` without an approved document is rejected at upload and blocks the build.
         ITSAppUsesNonExemptEncryption: false
+  # 多多 in the share sheet: images, files and text go to the composer (ShareExtension/).
+  DuoduoShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ShareExtension
+      - path: Shared
+    entitlements:
+      path: ShareExtension/DuoduoShare.entitlements
+      properties:
+        com.apple.security.application-groups: [group.$(POCKET_BUNDLE_ID)]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(POCKET_BUNDLE_ID).share
+        PRODUCT_NAME: DuoduoShare
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_EMIT_LOC_STRINGS: YES
+        LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+    info:
+      path: ShareExtension/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleDisplayName: 多多
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        PocketAppGroup: group.$(POCKET_BUNDLE_ID)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            # Any image, file or text; a share with none of them does not list 多多.
+            NSExtensionActivationRule: >-
+              SUBQUERY(extensionItems, $item, SUBQUERY($item.attachments, $a,
+              ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.data"
+              OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.url").@count > 0).@count > 0
 schemes:
   DuoduoPocket:
     build:

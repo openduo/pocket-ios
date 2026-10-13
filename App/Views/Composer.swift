@@ -10,14 +10,13 @@ import UniformTypeIdentifiers
 /// hold-to-talk; the keyboard toggle switches to text and back, and the choice is remembered.
 struct Composer: View {
     @EnvironmentObject var model: AppModel
-    @FocusState private var focused: Bool
+    @State private var focused = false
     @State private var photos: [PhotosPickerItem] = []
     @State private var showPhotos = false
     @State private var showCamera = false
     @State private var showFiles = false
 
-    /// The hold-to-talk bar shows in voice mode, except while ambient mode is on.
-    private var holdToTalk: Bool { model.voiceInput && !model.ambient.isOn }
+    private var holdToTalk: Bool { model.holdToTalk }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -54,16 +53,22 @@ struct Composer: View {
                 if holdToTalk {
                     HoldToTalkBar()
                 } else {
-                    TextField(String(localized: "发消息"), text: $model.draftText, axis: .vertical)
-                        .lineLimit(1...6)
-                        .font(.body)
-                        .focused($focused)
+                    PasteTextView(text: $model.draftText, focused: $focused, maxLines: 6) { images in
+                        for (i, image) in images.enumerated() {
+                            let name = String(localized: "粘贴-\(stamp())-\(i + 1).\(image.type.preferredFilenameExtension ?? "png")")
+                            model.addImported(name: name, type: image.type, data: image.data)
+                        }
+                    }
+                        .overlay(alignment: .leading) {
+                            if model.draftText.isEmpty {
+                                Text(String(localized: "发消息")).foregroundStyle(Color(uiColor: .placeholderText)).allowsHitTesting(false)
+                            }
+                        }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
                         .frame(minHeight: 38)
                         .background(RoundedRectangle(cornerRadius: 19, style: .continuous).fill(Palette.cell))
                         .overlay(RoundedRectangle(cornerRadius: 19, style: .continuous).stroke(Palette.hairline, lineWidth: 0.5))
-                        .submitLabel(.send)
                 }
 
                 Menu {
@@ -128,14 +133,8 @@ struct Composer: View {
     private func addPhoto(_ item: PhotosPickerItem) async {
         guard let data = try? await item.loadTransferable(type: Data.self) else { return }
         let type = item.supportedContentTypes.first
-        let image = UIImage(data: data)
-        let inline: Set<String> = ["image/png", "image/jpeg", "image/gif", "image/webp"]
-        if let mime = type?.preferredMIMEType, inline.contains(mime) {
-            let ext = type?.preferredFilenameExtension ?? "jpg"
-            await MainActor.run { model.addAttachment(name: String(localized: "照片-\(stamp()).\(ext)"), mime: mime, data: data, thumbnail: image) }
-        } else if let image, let jpeg = image.jpegData(compressionQuality: Self.photoJPEGQuality) {
-            await MainActor.run { model.addAttachment(name: String(localized: "照片-\(stamp()).jpg"), mime: "image/jpeg", data: jpeg, thumbnail: image) }
-        }
+        let name = String(localized: "照片-\(stamp()).\(type?.preferredFilenameExtension ?? "jpg")")
+        await MainActor.run { model.addImported(name: name, type: type, data: data) }
     }
 
     private func addFile(_ url: URL) {

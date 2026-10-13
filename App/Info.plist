@@ -22,6 +22,17 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>$(POCKET_BUNDLE_ID)</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>duoduopocket</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
@@ -38,6 +49,8 @@
 	<string>按住说话和环境模式需要使用麦克风。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>在对话中上传图片需要访问照片。</string>
+	<key>PocketAppGroup</key>
+	<string>group.$(POCKET_BUNDLE_ID)</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>

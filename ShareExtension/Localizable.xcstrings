@@ -1,0 +1,36 @@
+{
+  "sourceLanguage": "zh-Hans",
+  "strings": {
+    "交给多多失败": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't hand this to DuoDuo"
+          }
+        }
+      }
+    },
+    "正在交给多多…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Handing it to DuoDuo…"
+          }
+        }
+      }
+    },
+    "没有可以交给多多的内容": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing here DuoDuo can take"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}
