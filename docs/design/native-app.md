@@ -50,7 +50,7 @@ duoduo identity, iOS conventions. Values come from the ambient tokens
 | `turn tool` | `tool` | 在查 (the step line stays in the working card, §4.4) |
 | `duoduo_said` streaming | `generating` | 正在回复 |
 | playback (ambient) | `tts` | 正在说 |
-| ambient muted | `muted` | 环境模式 · 已静音 |
+| ambient 静音 (listening) | `listening` | 环境模式 · 在听 · 静音 |
 | ambient seat `unowned` / mic revoked | `deaf` | 听不到了 |
 | offline / connecting | `offline` | 连不上 · 正在重试 |
 
@@ -294,7 +294,7 @@ Two presentations of one state:
 | Thinking / tool | `turn` frames | 在想 / 在查, step line below (§4.4) |
 | Speaking | local playback of a `c-` speech | 正在说, caption grows with `duoduo_said` |
 | Filler | local playback of an `s` speech | 正在说, no caption |
-| Muted | user tapped 静音 | `muted` pose, "已静音，房间听不到" |
+| 静音 | user tapped 静音 | 在听; "已静音：还在听，回复只显示在屏幕上" |
 | Seat taken | `role: peer` (another edge in the same room) | "另一台设备在听" + 在这台手机上听 (re-hello) |
 | Deaf | `meta.state: unowned` while on, or mic revoked | `deaf` pose, "听不到了" + 重新打开 |
 | Interrupted | `AVAudioSession` interruption | "来电，已暂停" ; resumes when the system says it may |
@@ -486,8 +486,12 @@ cerebellum, which decides and the channel sends `stop_audio{reason:"barge_in"}`.
   between `PRESS_START` and `PRESS_END` (room mic off; the uplink keeps flowing, since the seat
   lease would expire in a long press otherwise), so the same speech does not enter the brain twice
   (voice note + room judge). Q12. The press also stops playback (§7.4 item 7).
-- 静音 in the ambient view sends `mute{on:false}` and stops sending bytes (privacy: bytes do not leave
-  the phone). After `seat_starve_ms` the seat goes `unowned`; the UI shows muted, not deaf.
+- 静音 in the ambient view silences the phone for this ambient session: the player's volume goes to
+  zero and nothing else changes. The room still hears, the speech still plays out at its pace, and
+  `played` / barge-in work as if it were heard. The next ambient session starts audible. In
+  ambient mode the audio session is in voice-chat mode, whose call volume cannot reach zero with
+  the volume buttons, so this is the only way to keep the phone quiet while it listens. To stop
+  the room hearing, the user turns ambient mode off.
 
 ### 7.6 Lifecycle and background
 

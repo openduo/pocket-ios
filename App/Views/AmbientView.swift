@@ -97,9 +97,9 @@ struct AmbientView: View {
             Spacer(minLength: 12).layoutPriority(-2)
 
             HStack(spacing: 0) {
-                control(a.phase == .muted ? "mic.slash.fill" : "mic.slash", a.phase == .muted ? String(localized: "取消静音") : String(localized: "静音"),
-                        fill: a.phase == .muted ? Palette.text : Palette.chip, fg: a.phase == .muted ? Palette.background : Palette.text) {
-                    AmbientController.shared.setMuted(a.phase != .muted)
+                control(a.silent ? "speaker.slash.fill" : "speaker.slash", a.silent ? String(localized: "取消静音") : String(localized: "静音"),
+                        fill: a.silent ? Palette.text : Palette.chip, fg: a.silent ? Palette.background : Palette.text) {
+                    AmbientController.shared.setSilent(!a.silent)
                 }
                 control("hand.raised.fill", String(localized: "别说了"), fill: a.speaking ? Palette.brand : Palette.chip,
                         fg: a.speaking ? Palette.onBrand : Palette.placeholder) {
@@ -144,7 +144,6 @@ struct AmbientView: View {
         switch a.phase {
         case .off: return String(localized: "已关闭")
         case .starting: return String(localized: "正在打开麦克风…")
-        case .muted: return String(localized: "已静音")
         case .seatTaken: return String(localized: "另一台设备在听")
         case .deaf: return String(localized: "听不到了")
         case .interrupted: return String(localized: "已暂停")
@@ -171,13 +170,13 @@ struct AmbientView: View {
     private var subtitle: String {
         let a = model.ambient
         switch a.phase {
-        case .muted: return String(localized: "房间听不到，声音不会离开手机")
         case .seatTaken: return String(localized: "同一个房间只能有一台设备在听")
         case .deaf: return String(localized: "房间没有收到声音")
         case .interrupted: return String(localized: "来电或其他声音占用了麦克风，结束后会接着听")
         case .failed(let why): return why
         case .starting: return a.route
         default:
+            if a.silent { return String(localized: "已静音：还在听，回复只显示在屏幕上") }
             if a.speaking { return a.speakingFiller ? String(localized: "马上回答你") : String(localized: "说话就能打断它") }
             return "\(a.route) · \(a.aec ? String(localized: "回声消除已开") : String(localized: "回声消除未开"))"
         }
@@ -263,7 +262,6 @@ struct AmbientPill: View {
     private var phase: String {
         let a = model.ambient
         switch a.phase {
-        case .muted: return String(localized: "已静音")
         case .deaf: return String(localized: "听不到了")
         case .seatTaken: return String(localized: "另一台设备在听")
         case .interrupted: return String(localized: "已暂停")
@@ -272,7 +270,7 @@ struct AmbientPill: View {
         default:
             if a.speaking { return String(localized: "正在说") }
             if let w = model.chat.working { return w.phase == .tool ? String(localized: "在查") : (w.phase == .streaming ? String(localized: "正在回复") : String(localized: "在想")) }
-            return String(localized: "在听")
+            return a.silent ? String(localized: "在听 · 静音") : String(localized: "在听")
         }
     }
 }

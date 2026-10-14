@@ -57,7 +57,7 @@ struct SettingsView: View {
                     }
                 } header: { Text(String(localized: "声音")) } footer: {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(String(localized: "播放语音回复：环境模式关着时，App 在前台就把多多的回复在这台手机上读出来；家里有设备在听时由那台设备播放。环境模式开着时，回复总会读出来。保持屏幕常亮：App 在前台时屏幕不自动锁定，手机可以放着当音箱用。"))
+                        Text(String(localized: "播放语音回复：环境模式关着时，App 在前台就把多多的回复在这台手机上读出来；家里有设备在听时由那台设备播放。环境模式开着时，回复总会读出来，不想出声就在环境模式里点静音。保持屏幕常亮：App 在前台时屏幕不自动锁定，手机可以放着当音箱用。"))
                         Text(headsetMic
                              ? String(localized: "按住说话时 AirPods 切到通话模式，正在放的音乐音质会变差，松手后恢复。")
                              : String(localized: "按住说话用手机麦克风，AirPods 继续放声音，音质不变。"))

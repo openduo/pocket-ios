@@ -13,7 +13,6 @@ struct AmbientSnapshot: Equatable {
         case off
         case starting
         case listening
-        case muted
         /// Another edge holds the room's seat.
         case seatTaken
         /// The room has no live capture master while on, or the mic was revoked.
@@ -24,6 +23,8 @@ struct AmbientSnapshot: Equatable {
     }
 
     var phase = Phase.off
+    /// 静音: this ambient session plays nothing on the phone; it still listens.
+    var silent = false
     var speaking = false
     var speakingFiller = false
     var aec = false
@@ -79,6 +80,8 @@ final class AmbientController: @unchecked Sendable {
     private var tuning = PocketTuning.load()
 
     private var on = false
+    /// 静音 for this ambient session; a new session starts audible.
+    private var silent = false
     private var interrupted = false
     private var failure: String?
 
@@ -126,6 +129,7 @@ final class AmbientController: @unchecked Sendable {
             settings = ChannelSettings.load()
             tuning = PocketTuning.load()
             on = true
+            setSilentOnQueue(false)
             interrupted = false
             failure = nil
             // The ambient engine replaces the playback-only one: a read in progress ends here.
@@ -164,15 +168,25 @@ final class AmbientController: @unchecked Sendable {
             if edge.helloSent, edge.muted { live.send(json: ["type": "mute", "on": true]) }
             stopRead()
             stopAll()
+            setSilentOnQueue(false)
             publish()
         }
     }
 
-    func setMuted(_ m: Bool) {
+    /// 静音: the phone stops playing the room's speech for this session and keeps listening.
+    /// Nothing changes on the wire: the speech still plays out at its pace, unheard.
+    func setSilent(_ s: Bool) {
         queue.async { [self] in
-            perform(edge.setUserMute(m))
+            setSilentOnQueue(s)
             publish()
         }
+    }
+
+    private func setSilentOnQueue(_ s: Bool) {
+        guard silent != s else { return }
+        silent = s
+        VoiceIO.shared.setOutputMuted(s)
+        AppLog.shared.log("ambient_silent", ["on": s])
     }
 
     /// 别说了.
@@ -557,8 +571,6 @@ final class AmbientController: @unchecked Sendable {
             s.phase = .failed(failure)
         } else if interrupted {
             s.phase = .interrupted
-        } else if edge.userMuted {
-            s.phase = .muted
         } else if !edge.helloSent {
             s.phase = .starting
         } else if edge.role == .peer {
@@ -568,6 +580,7 @@ final class AmbientController: @unchecked Sendable {
         } else {
             s.phase = .listening
         }
+        s.silent = on && silent
         s.speaking = edge.speaking
         s.speakingFiller = edge.speakingFiller
         s.aec = edge.aec

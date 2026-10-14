@@ -82,13 +82,6 @@ final class AmbientEdgeTests: XCTestCase {
         XCTAssertEqual(sends(e.pressEnded()), [["type": "mute", "on": true]])
         // An unmatched end does nothing.
         XCTAssertTrue(e.pressEnded().isEmpty)
-        // The user's mute: frame and no bytes.
-        XCTAssertEqual(sends(e.setUserMute(true)), [["type": "mute", "on": false]])
-        XCTAssertFalse(e.sendsAudio)
-        // A press while muted changes nothing on the wire, and its end keeps the mute.
-        XCTAssertTrue(e.pressBegan().isEmpty)
-        XCTAssertTrue(e.pressEnded().isEmpty)
-        XCTAssertEqual(sends(e.setUserMute(false)), [["type": "mute", "on": true]])
     }
 
     func testBinaryBeforeSpeechIsDropped() {

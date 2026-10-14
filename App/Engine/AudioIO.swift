@@ -56,6 +56,9 @@ final class VoiceIO: @unchecked Sendable {
     /// `clearPlayback` starts a new generation, so the cleared blocks' callbacks count nothing.
     private var queued = 0
     private var playGen = 0
+    /// The player is silent (ambient mode's 静音). Playback still runs at its own pace, so the
+    /// channel's `played` reports and barge-in behave as if it were heard.
+    private var outputMuted = false
     /// Called after a media services reset; the owner rebuilds everything.
     var onRebuildNeeded: ((String) -> Void)?
     /// Called after the engine recovered from a configuration change (route change): voice
@@ -165,6 +168,7 @@ final class VoiceIO: @unchecked Sendable {
         e.prepare()
         NotificationCenter.default.addObserver(self, selector: #selector(configChanged(_:)),
                                                name: .AVAudioEngineConfigurationChange, object: e)
+        p.volume = outputMuted ? 0 : 1
         lock.lock()
         engine = e
         player = p
@@ -204,6 +208,7 @@ final class VoiceIO: @unchecked Sendable {
         e.prepare()
         NotificationCenter.default.addObserver(self, selector: #selector(configChanged(_:)),
                                                name: .AVAudioEngineConfigurationChange, object: e)
+        p.volume = outputMuted ? 0 : 1
         lock.lock()
         engine = e
         player = p
@@ -495,6 +500,15 @@ final class VoiceIO: @unchecked Sendable {
     /// With no engine running (ambient off, no hold) a playback-only engine starts first.
     /// Runs on `configQueue`, so an idle stop never falls between finding the player and
     /// scheduling on it.
+    /// Silences or restores the player, the current one and any built later.
+    func setOutputMuted(_ m: Bool) {
+        lock.lock()
+        outputMuted = m
+        let p = player
+        lock.unlock()
+        p?.volume = m ? 0 : 1
+    }
+
     func schedule(_ samples: [Int16], done: @escaping () -> Void) -> Bool {
         configQueue.sync { scheduleOnConfig(samples, done: done) }
     }
