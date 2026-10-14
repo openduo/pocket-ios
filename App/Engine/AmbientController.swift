@@ -173,8 +173,9 @@ final class AmbientController: @unchecked Sendable {
         }
     }
 
-    /// 静音: the phone stops playing the room's speech for this session and keeps listening.
-    /// Nothing changes on the wire: the speech still plays out at its pace, unheard.
+    /// 静音: the phone stops playing the room's speech for this session and keeps listening. New
+    /// speech is not played and is reported played at once; blocks already queued finish at zero
+    /// volume.
     func setSilent(_ s: Bool) {
         queue.async { [self] in
             setSilentOnQueue(s)
@@ -502,6 +503,11 @@ final class AmbientController: @unchecked Sendable {
                     continue
                 }
                 let ms = Double(samples.count) * 1000 / Double(PocketConstants.sampleRate)
+                if silent {
+                    // 静音: the reply is not played; it counts as played at once.
+                    perform(edge.skipped(gen: gen, ms: ms))
+                    continue
+                }
                 let wasSpeaking = edge.speaking
                 if VoiceIO.shared.schedule(samples, done: { [weak self] in
                     self?.queue.async { self?.blockPlayed(gen: gen, ms: ms) }

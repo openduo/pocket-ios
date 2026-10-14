@@ -302,6 +302,17 @@ public struct AmbientEdge: Equatable {
         return reportsPlayback ? out : []
     }
 
+    /// 静音: one block of `gen` was not played. It counts as played at once and is reported at
+    /// once (nothing later drains it), so the channel's speech ends without waiting for audio
+    /// nobody hears, and there is no window in which room talk barges in on it.
+    public mutating func skipped(gen g: Int, ms: Double) -> [Action] {
+        guard g == gen, current != nil, let id = clockID else { return [] }
+        playedMs += ms
+        lastReported = playedMs
+        let out: [Action] = [.send(["type": "played", "speech_id": id, "ms": Int(playedMs.rounded())])]
+        return reportsPlayback ? out : []
+    }
+
     private mutating func stopSpeech(_ id: String?) -> [Action] {
         // A `stop_audio` naming another speech than the current one is stale.
         if let id, id != current { return [] }

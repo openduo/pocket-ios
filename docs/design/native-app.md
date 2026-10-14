@@ -486,9 +486,10 @@ cerebellum, which decides and the channel sends `stop_audio{reason:"barge_in"}`.
   between `PRESS_START` and `PRESS_END` (room mic off; the uplink keeps flowing, since the seat
   lease would expire in a long press otherwise), so the same speech does not enter the brain twice
   (voice note + room judge). Q12. The press also stops playback (§7.4 item 7).
-- 静音 in the ambient view silences the phone for this ambient session: the player's volume goes to
-  zero and nothing else changes. The room still hears, the speech still plays out at its pace, and
-  `played` / barge-in work as if it were heard. The next ambient session starts audible. In
+- 静音 in the ambient view silences the phone for this ambient session: new speech is decoded but
+  not played, and each block is reported `played` at once, so the channel's speech ends without
+  waiting and room talk cannot barge in on audio nobody hears; blocks queued before the tap finish
+  at zero volume. The room still hears. The next ambient session starts audible. In
   ambient mode the audio session is in voice-chat mode, whose call volume cannot reach zero with
   the volume buttons, so this is the only way to keep the phone quiet while it listens. To stop
   the room hearing, the user turns ambient mode off.

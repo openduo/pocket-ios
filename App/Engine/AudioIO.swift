@@ -56,8 +56,7 @@ final class VoiceIO: @unchecked Sendable {
     /// `clearPlayback` starts a new generation, so the cleared blocks' callbacks count nothing.
     private var queued = 0
     private var playGen = 0
-    /// The player is silent (ambient mode's 静音). Playback still runs at its own pace, so the
-    /// channel's `played` reports and barge-in behave as if it were heard.
+    /// The player is silent (ambient mode's 静音): blocks queued before it finish unheard.
     private var outputMuted = false
     /// Called after a media services reset; the owner rebuilds everything.
     var onRebuildNeeded: ((String) -> Void)?
