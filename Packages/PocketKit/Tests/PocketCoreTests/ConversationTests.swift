@@ -392,7 +392,9 @@ final class ChannelAPITests: XCTestCase {
         XCTAssertEqual(try JSONSerialization.jsonObject(with: ChannelPaths.speechBody(text: "你好")) as? [String: String],
                        ["text": "你好"])
         XCTAssertEqual(ChannelPaths.imlog(room: "r", since: 5), "/api/imlog?room=r&since=5")
-        XCTAssertEqual(ChannelPaths.typedMessageHeaders(key: "k"), ["Content-Type": "application/json", "Idempotency-Key": "k"])
+        XCTAssertEqual(ChannelPaths.typedMessageHeaders(key: "k", surface: Surface(display: .phone, spoken: false)),
+                       ["Content-Type": "application/json", "Idempotency-Key": "k",
+                        "X-Ambient-Display": "phone", "X-Ambient-Spoken": "0"])
         XCTAssertEqual(ChannelPaths.attachment(room: "r", ChannelAttachment(name: "报价 v2.pdf", mime: "application/pdf", sha256: "ff")),
                        "/api/attachment?room=r&sha256=ff&mime=application/pdf&name=%E6%8A%A5%E4%BB%B7%20v2.pdf")
     }

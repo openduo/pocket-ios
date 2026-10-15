@@ -183,6 +183,11 @@ final class LinkMessageTests: XCTestCase {
         XCTAssertNoThrow(try PhoneMessage.reply(replyID: 5, final: true, text: long).fragments(attPayload: 182))
     }
 
+    func testReplyReachesTheDeviceAsPlainText() {
+        let fitted = PhoneMessage.reply(replyID: 1, final: true, text: "# 标题\n\n**明天** 9 点\n\n- 带伞").fitted(maxMessage: 4096)
+        XCTAssertEqual(fitted, .reply(replyID: 1, final: true, text: "标题\n明天 9 点\n带伞"))
+    }
+
     func testAppStateLanguageCompatibility() throws {
         // A 1.1 phone sends no language byte; an unknown value or extra bytes leave it unset.
         XCTAssertEqual(try PhoneMessage.decode(type: 0x84, payload: Data([1])), .appState(.serverUnreachable, language: nil))

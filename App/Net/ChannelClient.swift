@@ -77,7 +77,7 @@ struct ChannelClient: Sendable {
     /// gets the first receipt, so a text whose response was lost is not taken twice.
     func sendMessage(text: String, attachments: [ChannelAttachment], key: String) async throws -> MessageReceipt {
         let (s, b) = try await call("POST", ChannelPaths.messages(room: settings.room),
-                                    headers: ChannelPaths.typedMessageHeaders(key: key),
+                                    headers: ChannelPaths.typedMessageHeaders(key: key, surface: PocketSurface.current()),
                                     body: ChannelPaths.typedMessageBody(text: text, attachments: attachments))
         guard s == 202 else { throw ChannelError.http(s, Self.errorText(b)) }
         return MessageReceipt.decode(b) ?? MessageReceipt(messageID: key, at: nil)

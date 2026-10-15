@@ -98,6 +98,7 @@ final class PocketEngine: @unchecked Sendable {
         link.onDisconnected = { [unowned self] in linkLost() }
         link.onState = { [unowned self] s, d in
             update { $0.link = s; $0.linkDetail = d; $0.deviceName = self.link.peripheralName }
+            PocketSurface.changed()
         }
     }
 
@@ -255,7 +256,8 @@ final class PocketEngine: @unchecked Sendable {
                                   expiry: expiry)
         queue.asyncAfter(deadline: .now() + deadline, execute: expiry)
         Task.detached { [self] in
-            let report = await uploader.upload(note, room: room, within: deadline - (CPUClock.uptime() - endWall))
+            let report = await uploader.upload(note, room: room, within: deadline - (CPUClock.uptime() - endWall),
+                                               surface: PocketSurface.current())
             queue.async { [self] in
                 let doneWall = CPUClock.uptime(), doneCPU = CPUClock.processSeconds()
                 // One line per upload, with its CPU share (background CPU budget).

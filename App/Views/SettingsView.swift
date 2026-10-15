@@ -46,7 +46,10 @@ struct SettingsView: View {
                     Toggle(isOn: $speakReplies) { label("speaker.wave.2.bubble", Palette.secondary, String(localized: "播放语音回复")) }
                         .onChange(of: speakReplies) { _, _ in AmbientController.shared.audioWantChanged("setting") }
                     Toggle(isOn: $keepAwake) { label("sun.max", Palette.secondary, String(localized: "保持屏幕常亮")) }
-                        .onChange(of: keepAwake) { _, on in UIApplication.shared.isIdleTimerDisabled = on }
+                        .onChange(of: keepAwake) { _, on in
+                            UIApplication.shared.isIdleTimerDisabled = on
+                            PocketSurface.changed()
+                        }
                     Toggle(isOn: $keepListening) { label("lock.iphone", Palette.secondary, String(localized: "离开 App 后继续听")) }
                     Toggle(isOn: $haptics) { label("hand.tap", Palette.secondary, String(localized: "按住说话的触感反馈")) }
                     Picker(selection: $headsetMic) {

@@ -434,7 +434,7 @@ final class ConversationStore: @unchecked Sendable {
                     break
                 }
                 let uploader = VoiceUploader(transport: TsnetTransport(tuning: tuning), tuning: tuning)
-                let r = await uploader.upload(note, room: room)
+                let r = await uploader.upload(note, room: room, surface: PocketSurface.current())
                 notice = r.upgrade
                 AppLog.shared.log("phone_note", ["message_id": item.messageID, "packets": note.packets.count,
                                                  "accepted": r.outcome.messageID != nil, "attempts": r.attempts,

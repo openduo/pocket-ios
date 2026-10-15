@@ -241,15 +241,16 @@ public enum PhoneMessage: Equatable {
                                      attPayload: attPayload, maxMessage: maxMessage)
     }
 
-    /// REPLY and RESULT text longer than the device's message bound is cut at a character
-    /// boundary and marked with "…". This affects the Passport screen only; the phone keeps and
-    /// shows the full text.
+    /// REPLY text loses its Markdown syntax: the device shows plain text, where `**` and `#` would
+    /// appear literally. REPLY and RESULT text longer than the device's message bound is then cut
+    /// at a character boundary and marked with "…". This affects the Passport screen only; the
+    /// phone keeps and shows the full text.
     public func fitted(maxMessage: Int) -> PhoneMessage {
         // The text budget is the bound minus the fixed fields: reply_id u32 + final u8, or
         // press_id u16 + code u8.
         switch self {
         case .reply(let id, let final, let text):
-            return .reply(replyID: id, final: final, text: Self.cut(text, bytes: maxMessage - 5))
+            return .reply(replyID: id, final: final, text: Self.cut(MarkdownDoc.plainText(text), bytes: maxMessage - 5))
         case .result(let id, let code, let text):
             return .result(pressID: id, code: code, text: Self.cut(text, bytes: maxMessage - 3))
         default:

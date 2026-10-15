@@ -23,7 +23,7 @@ final class VoiceNoteTests: XCTestCase {
 
     func testHeadersAndPath() {
         let id = UUID(uuidString: "6F9619FF-8B86-D011-B42D-00C04FC964FF")!
-        let h = VoiceUploader.headers(for: VoiceNote(id: id, source: .phone, packets: []))
+        let h = VoiceUploader.headers(for: VoiceNote(id: id, source: .phone, packets: []), surface: anySurface)
         XCTAssertEqual(h["Content-Type"], "application/vnd.ambient.opus-packets")
         XCTAssertEqual(h["Idempotency-Key"], "6f9619ff-8b86-d011-b42d-00c04fc964ff")
         XCTAssertEqual(h["X-Voice-Source"], "phone")
@@ -148,7 +148,7 @@ final class VoiceUploaderTests: XCTestCase {
 
     func testAccepted() async {
         let t = FakeTransport([.status(202, #"{"message_id":"\#(key)","at":"2030-01-01T00:00:00Z"}"#)])
-        let r = await uploader(t, FakeClock()).upload(note, room: "study")
+        let r = await uploader(t, FakeClock()).upload(note, room: "study", surface: anySurface)
         XCTAssertEqual(r.outcome, .accepted(messageID: key))
         XCTAssertNil(r.outcome.failureCode)
         XCTAssertEqual(r.attempts, 1)
@@ -160,7 +160,7 @@ final class VoiceUploaderTests: XCTestCase {
         let t = FakeTransport([.fail(.network("reset")), .status(503, #"{"error":"perception_unavailable"}"#),
                                .status(202, #"{"message_id":"\#(key)"}"#)])
         let c = FakeClock()
-        let r = await uploader(t, c).upload(note, room: "r")
+        let r = await uploader(t, c).upload(note, room: "r", surface: anySurface)
         XCTAssertEqual(r.outcome, .accepted(messageID: key))
         XCTAssertEqual(r.attempts, 3)
         XCTAssertEqual(Set(t.seen.map { $0.headers["Idempotency-Key"]! }), [key])
@@ -172,7 +172,7 @@ final class VoiceUploaderTests: XCTestCase {
         for (status, body) in [(400, #"{"error":"bad_body"}"#), (410, #"{"error":"update_required"}"#),
                                (413, #"{"error":"body_too_large"}"#)] {
             let t = FakeTransport([.status(status, body), .status(202, "{}")])
-            let r = await uploader(t, FakeClock()).upload(note, room: "r")
+            let r = await uploader(t, FakeClock()).upload(note, room: "r", surface: anySurface)
             XCTAssertEqual(r.attempts, 1)
             XCTAssertEqual(r.outcome.failureCode, .sendFailed)
         }
@@ -182,18 +182,18 @@ final class VoiceUploaderTests: XCTestCase {
         for (status, body, notice) in [(410, #"{"error":"update_required"}"#, UpgradeNotice.appUpdate),
                                        (404, "Not Found", .channelUpgrade)] {
             let t = FakeTransport([.status(status, body), .status(202, "{}")])
-            let r = await uploader(t, FakeClock()).upload(note, room: "r")
+            let r = await uploader(t, FakeClock()).upload(note, room: "r", surface: anySurface)
             XCTAssertEqual(r.attempts, 1)
             XCTAssertEqual(r.upgrade, notice)
         }
         let t = FakeTransport([.status(400, #"{"error":"bad_body"}"#)])
-        let r = await uploader(t, FakeClock()).upload(note, room: "r")
+        let r = await uploader(t, FakeClock()).upload(note, room: "r", surface: anySurface)
         XCTAssertNil(r.upgrade)
     }
 
     func testPerceptionUnavailableUntilTheDeadlineIsSendFailed() async {
         let t = FakeTransport(Array(repeating: .status(503, #"{"error":"perception_unavailable"}"#), count: 100))
-        let r = await uploader(t, FakeClock()).upload(note, room: "r", within: 3)
+        let r = await uploader(t, FakeClock()).upload(note, room: "r", within: 3, surface: anySurface)
         XCTAssertEqual(r.outcome, .sendFailed("503 perception_unavailable"))
         XCTAssertEqual(r.outcome.failureCode, .sendFailed)
     }
@@ -201,7 +201,7 @@ final class VoiceUploaderTests: XCTestCase {
     func testDeadlineEndsRetries() async {
         let t = FakeTransport(Array(repeating: .fail(.notConnected("NeedsLogin")), count: 100))
         let c = FakeClock()
-        let r = await uploader(t, c, deadline: 10).upload(note, room: "r")
+        let r = await uploader(t, c, deadline: 10).upload(note, room: "r", surface: anySurface)
         XCTAssertEqual(r.outcome, .notConnected("NeedsLogin"))
         XCTAssertEqual(r.outcome.failureCode, .notConnectedToServer)
         // 0.5 + 1 + 2 + 4 + 2.5 (cut at the deadline)
@@ -213,14 +213,16 @@ final class VoiceUploaderTests: XCTestCase {
 
     func testServerErrorsAfterDeadlineReportSendFailed() async {
         let t = FakeTransport(Array(repeating: .status(500, "{}"), count: 100))
-        let r = await uploader(t, FakeClock(), deadline: 1).upload(note, room: "r")
+        let r = await uploader(t, FakeClock(), deadline: 1).upload(note, room: "r", surface: anySurface)
         XCTAssertEqual(r.outcome.failureCode, .sendFailed)
     }
 
     func testEmptyNoteIsNotUploaded() async {
         let t = FakeTransport([])
-        let r = await uploader(t, FakeClock()).upload(VoiceNote(source: .passport, packets: []), room: "r")
+        let r = await uploader(t, FakeClock()).upload(VoiceNote(source: .passport, packets: []), room: "r", surface: anySurface)
         XCTAssertEqual(r.outcome.failureCode, .sendFailed)
         XCTAssertTrue(t.seen.isEmpty)
     }
 }
+
+let anySurface = Surface(display: .phone, spoken: false)
