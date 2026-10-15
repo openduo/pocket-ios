@@ -26,16 +26,19 @@ enum Demo {
     static let screen: String? = UserDefaults.standard.string(forKey: "PocketDemo")
     static var active: Bool { screen != nil }
 
-    /// `-PocketAmbientProbe <seconds>`: turns ambient on muted (no audio leaves the phone), so
-    /// the edge handshake can be checked in the log against a real channel, then turns it off.
+    /// `-PocketAmbientProbe <seconds>`: turns ambient on with the room's mic off, as during a
+    /// press (the channel drops the audio), so the edge handshake can be checked in the log
+    /// against a real channel, then turns it off.
     static func runAmbientProbe() {
         let secs = UserDefaults.standard.double(forKey: "PocketAmbientProbe")
         guard secs > 0 else { return }
         AppLog.shared.log("ambient_probe", ["seconds": secs])
-        AmbientController.shared.setMuted(true)
         AmbientController.shared.turnOn()
-        AmbientController.shared.setMuted(true)
-        DispatchQueue.main.asyncAfter(deadline: .now() + secs) { AmbientController.shared.turnOff() }
+        AmbientController.shared.pressBegan()
+        DispatchQueue.main.asyncAfter(deadline: .now() + secs) {
+            AmbientController.shared.pressEnded()
+            AmbientController.shared.turnOff()
+        }
     }
 
     /// `-PocketPlaybackProbe <seconds>`: starts the ambient engine (no socket), plays an encoded and

@@ -43,6 +43,8 @@ struct PocketApp: App {
                 .environmentObject(model)
                 .preferredColorScheme(model.colorScheme)
                 .tint(Palette.brand)
+                // The share extension opens the app with a share waiting in the inbox.
+                .onOpenURL { url in if url.scheme == ShareInbox.scheme { model.importShares() } }
         }
         .onChange(of: phase) { _, p in
             let name: String = switch p {
@@ -55,6 +57,8 @@ struct PocketApp: App {
             AppLog.shared.log("scene_phase", ["phase": name])
             model.setActive(p == .active)
             if p == .active { PocketEngine.shared.appBecameActive() }
+            // Also when the extension could not open the app and the user did.
+            if p == .active { model.importShares() }
             if p == .active || p == .background { AmbientController.shared.audioWantChanged(name) }
             if p == .active { UIApplication.shared.isIdleTimerDisabled = AudioPreferences.keepAwake }
             if p == .background, !AmbientPolicy.continuesInBackground { AmbientController.shared.turnOff() }

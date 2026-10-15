@@ -134,8 +134,9 @@ public struct TurnState: Equatable, Sendable {
         if var w = working {
             for id in snapshot.messageIDs where !w.messages.contains(id) { w.messages.append(id) }
             working = w
-        } else {
-            let phase: Phase = snapshot.phase == "tool" ? .tool : snapshot.phase == "received" ? .received : .thinking
+        } else if let phase = Phase(rawValue: snapshot.phase), phase != .streaming {
+            // Only a brain at work gets a bubble. `speaking` and `done` are a playback, whose
+            // text arrives as a row; `streaming` is the app's own phase, not a wire one.
             working = Working(messages: snapshot.messageIDs, phase: phase, startedAt: nil)
         }
         return before != working

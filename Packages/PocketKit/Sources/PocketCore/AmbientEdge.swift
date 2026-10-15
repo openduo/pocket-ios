@@ -13,8 +13,7 @@ import Foundation
 ///   `meta{conn}` while capturing (reconnect reclaims the seat).
 /// - `meta{role:"peer"}`: another edge holds the seat; stop sending audio until the user takes it
 ///   over (a fresh `hello`).
-/// - `mute{on}` is the room's capture switch, `on` = mic on. The user's 静音 sends `mute{on:false}`
-///   and stops sending bytes (bytes do not leave the phone). A press (phone hold-to-talk or
+/// - `mute{on}` is the room's capture switch, `on` = mic on. A press (phone hold-to-talk or
 ///   Passport) switches the room mic off for its length so the same
 ///   speech does not enter the brain twice (design Q12); audio keeps flowing during a press
 ///   because the channel drops it while muted and the seat lease (`seat_starve_ms`) would expire
@@ -79,7 +78,6 @@ public struct AmbientEdge: Equatable {
     /// An encoded packet exists (capture is live).
     public private(set) var capturing = false
     public var aec = false
-    public private(set) var userMuted = false
     public private(set) var pressCount = 0
     public var room = ""
 
@@ -99,8 +97,9 @@ public struct AmbientEdge: Equatable {
     public init(room: String = "") { self.room = room }
 
     /// Whether a captured packet goes up the socket now.
-    public var sendsAudio: Bool { helloSent && role != .peer && !userMuted }
-    public var muted: Bool { userMuted || pressCount > 0 }
+    public var sendsAudio: Bool { helloSent && role != .peer }
+    /// The room's mic is off for a press (phone hold-to-talk or Passport).
+    public var muted: Bool { pressCount > 0 }
     public var speakingFiller: Bool { speaking && (current?.hasPrefix(Self.fillerPrefix) ?? false) }
     /// Playback reports (`played`, `interrupted`) go to the channel only from the connection that
     /// said `hello`: the capture owner in live mode. In message mode the channel takes none.
@@ -158,12 +157,6 @@ public struct AmbientEdge: Equatable {
     /// `mute{on}` is the channel's capture master switch: `on` means the room's mic is ON
     /// (`EdgeMuteFrame`, state.ts sets `micOn = on`). Muting sends `on:false`.
     public func micFrame() -> Action { .send(["type": "mute", "on": !muted]) }
-
-    public mutating func setUserMute(_ on: Bool) -> [Action] {
-        let before = muted
-        userMuted = on
-        return before != muted && helloSent ? [micFrame()] : []
-    }
 
     public mutating func pressBegan() -> [Action] {
         let before = muted
@@ -306,6 +299,17 @@ public struct AmbientEdge: Equatable {
             }
             speaking = false
         }
+        return reportsPlayback ? out : []
+    }
+
+    /// 静音: one block of `gen` was not played. It counts as played at once and is reported at
+    /// once (nothing later drains it), so the channel's speech ends without waiting for audio
+    /// nobody hears, and there is no window in which room talk barges in on it.
+    public mutating func skipped(gen g: Int, ms: Double) -> [Action] {
+        guard g == gen, current != nil, let id = clockID else { return [] }
+        playedMs += ms
+        lastReported = playedMs
+        let out: [Action] = [.send(["type": "played", "speech_id": id, "ms": Int(playedMs.rounded())])]
         return reportsPlayback ? out : []
     }
 

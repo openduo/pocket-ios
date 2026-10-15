@@ -13,7 +13,6 @@ struct AmbientSnapshot: Equatable {
         case off
         case starting
         case listening
-        case muted
         /// Another edge holds the room's seat.
         case seatTaken
         /// The room has no live capture master while on, or the mic was revoked.
@@ -24,6 +23,8 @@ struct AmbientSnapshot: Equatable {
     }
 
     var phase = Phase.off
+    /// 静音: this ambient session plays nothing on the phone; it still listens.
+    var silent = false
     var speaking = false
     var speakingFiller = false
     var aec = false
@@ -40,8 +41,8 @@ struct AmbientSnapshot: Equatable {
 ///
 /// The phone is a mouth whenever its connection was opened with `audio=1`: replies play here with
 /// ambient off too (the room is then in message mode, and nothing is reported back). The switch
-/// is the 播放语音回复 setting, asked for while the app is in front or ambient mode runs, so no
-/// reply plays from a pocket. A change is a new connection from the cursor. A read aloud
+/// is on while ambient mode runs, and otherwise the 播放语音回复 setting while the app is in front,
+/// so no reply plays from a pocket. A change is a new connection from the cursor. A read aloud
 /// (`POST /api/speech`) plays here as well, outside the room's speech.
 ///
 /// The app holds one `/live` connection, owned here. Its conversation frames go to
@@ -79,6 +80,8 @@ final class AmbientController: @unchecked Sendable {
     private var tuning = PocketTuning.load()
 
     private var on = false
+    /// 静音 for this ambient session; a new session starts audible.
+    private var silent = false
     private var interrupted = false
     private var failure: String?
 
@@ -126,10 +129,17 @@ final class AmbientController: @unchecked Sendable {
             settings = ChannelSettings.load()
             tuning = PocketTuning.load()
             on = true
+            setSilentOnQueue(false)
             interrupted = false
             failure = nil
             // The ambient engine replaces the playback-only one: a read in progress ends here.
             stopRead()
+            // Ambient mode always asks `audio=1`: replace a connection opened without it before
+            // the new edge says `hello` on it.
+            if liveAudio != nil, liveAudio != wantsAudio {
+                liveReplaced()
+                live.close()
+            }
             newEdge()
             AppLog.shared.log("ambient_on")
             startAudio()
@@ -158,15 +168,26 @@ final class AmbientController: @unchecked Sendable {
             if edge.helloSent, edge.muted { live.send(json: ["type": "mute", "on": true]) }
             stopRead()
             stopAll()
+            setSilentOnQueue(false)
             publish()
         }
     }
 
-    func setMuted(_ m: Bool) {
+    /// 静音: the phone stops playing the room's speech for this session and keeps listening. New
+    /// speech is not played and is reported played at once; blocks already queued finish at zero
+    /// volume.
+    func setSilent(_ s: Bool) {
         queue.async { [self] in
-            perform(edge.setUserMute(m))
+            setSilentOnQueue(s)
             publish()
         }
+    }
+
+    private func setSilentOnQueue(_ s: Bool) {
+        guard silent != s else { return }
+        silent = s
+        VoiceIO.shared.setOutputMuted(s)
+        AppLog.shared.log("ambient_silent", ["on": s])
     }
 
     /// 别说了.
@@ -248,11 +269,12 @@ final class AmbientController: @unchecked Sendable {
         try live.open(path: ChannelPaths.live(room: s.room, since: since, audio: audio), timeout: timeout)
     }
 
-    /// The `audio` switch a connection opened now asks for: the setting, while the app is in
-    /// front or ambient mode runs. Not while the audio session is interrupted: the phone cannot
-    /// play during a call, so it must not count as a mouth.
+    /// The `audio` switch a connection opened now asks for: always while ambient mode runs (it is
+    /// a voice in the room; the user mutes it there), else the setting while the app is in front.
+    /// Not while the audio session is interrupted: the phone cannot play during a call, so it
+    /// must not count as a mouth.
     private var wantsAudio: Bool {
-        AudioPreferences.speakReplies && !interrupted && (on || AppPhase.value != "background")
+        !interrupted && (on || (AudioPreferences.speakReplies && AppPhase.value != "background"))
     }
 
     /// Whether the open connection's `audio` switch is still the one wanted. A connection that is
@@ -481,6 +503,11 @@ final class AmbientController: @unchecked Sendable {
                     continue
                 }
                 let ms = Double(samples.count) * 1000 / Double(PocketConstants.sampleRate)
+                if silent {
+                    // 静音: the reply is not played; it counts as played at once.
+                    perform(edge.skipped(gen: gen, ms: ms))
+                    continue
+                }
                 let wasSpeaking = edge.speaking
                 if VoiceIO.shared.schedule(samples, done: { [weak self] in
                     self?.queue.async { self?.blockPlayed(gen: gen, ms: ms) }
@@ -550,8 +577,6 @@ final class AmbientController: @unchecked Sendable {
             s.phase = .failed(failure)
         } else if interrupted {
             s.phase = .interrupted
-        } else if edge.userMuted {
-            s.phase = .muted
         } else if !edge.helloSent {
             s.phase = .starting
         } else if edge.role == .peer {
@@ -561,6 +586,7 @@ final class AmbientController: @unchecked Sendable {
         } else {
             s.phase = .listening
         }
+        s.silent = on && silent
         s.speaking = edge.speaking
         s.speakingFiller = edge.speakingFiller
         s.aec = edge.aec

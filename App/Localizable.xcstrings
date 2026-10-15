@@ -1135,12 +1135,12 @@
         }
       }
     },
-    "已静音": {
+    "在听 · 静音": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Muted"
+            "value": "Listening · Muted"
           }
         }
       }
@@ -1285,12 +1285,12 @@
         }
       }
     },
-    "房间听不到，声音不会离开手机": {
+    "已静音：还在听，回复只显示在屏幕上": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The room can't hear you; no audio leaves the phone"
+            "value": "Muted: still listening; replies show on screen only"
           }
         }
       }
@@ -1557,12 +1557,12 @@
         }
       }
     },
-    "播放语音回复：App 在前台或环境模式开着时，多多的回复在这台手机上读出来；家里有设备在听时由那台设备播放。保持屏幕常亮：App 在前台时屏幕不自动锁定，手机可以放着当音箱用。": {
+    "播放语音回复：环境模式关着时，App 在前台就把多多的回复在这台手机上读出来；家里有设备在听时由那台设备播放。环境模式开着时，回复总会读出来，不想出声就在环境模式里点静音。保持屏幕常亮：App 在前台时屏幕不自动锁定，手机可以放着当音箱用。": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Play spoken replies: while the app is open or ambient mode is on, DuoDuo's replies are spoken on this phone; when a device at home is listening, that device speaks them. Keep screen on: while the app is open the screen does not lock, so the phone can stand as a speaker."
+            "value": "Play spoken replies: with ambient mode off, DuoDuo's replies are spoken on this phone while the app is open; when a device at home is listening, that device speaks them. With ambient mode on, replies are always spoken; tap Mute there to keep the phone quiet. Keep screen on: while the app is open the screen does not lock, so the phone can stand as a speaker."
           }
         }
       }
@@ -2077,12 +2077,12 @@
         }
       }
     },
-    "照片-%@.jpg": {
+    "粘贴-%@-%lld.%@": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Photo-%@.jpg"
+            "value": "Pasted-%1$@-%2$lld.%3$@"
           }
         }
       }
@@ -2187,12 +2187,12 @@
         }
       }
     },
-    "环境模式 · 已静音": {
+    "环境模式 · 在听 · 静音": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ambient · muted"
+            "value": "Ambient mode · Listening · Muted"
           }
         }
       }

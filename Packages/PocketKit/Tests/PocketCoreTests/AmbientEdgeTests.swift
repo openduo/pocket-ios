@@ -82,13 +82,6 @@ final class AmbientEdgeTests: XCTestCase {
         XCTAssertEqual(sends(e.pressEnded()), [["type": "mute", "on": true]])
         // An unmatched end does nothing.
         XCTAssertTrue(e.pressEnded().isEmpty)
-        // The user's mute: frame and no bytes.
-        XCTAssertEqual(sends(e.setUserMute(true)), [["type": "mute", "on": false]])
-        XCTAssertFalse(e.sendsAudio)
-        // A press while muted changes nothing on the wire, and its end keeps the mute.
-        XCTAssertTrue(e.pressBegan().isEmpty)
-        XCTAssertTrue(e.pressEnded().isEmpty)
-        XCTAssertEqual(sends(e.setUserMute(false)), [["type": "mute", "on": true]])
     }
 
     func testBinaryBeforeSpeechIsDropped() {
@@ -113,6 +106,18 @@ final class AmbientEdgeTests: XCTestCase {
         // First block reports at once, then every >= 250 ms, then the drain flushes 1200.
         XCTAssertEqual(reports, [60, 360, 660, 960, 1200])
         XCTAssertFalse(e.speaking)
+    }
+
+    /// 静音: skipped blocks report the watermark at once and never mark the edge speaking.
+    func testSkippedBlocksReportAtOnce() {
+        var e = seated()
+        _ = e.frame(["type": "speech", "speech_id": "c-1"])
+        guard case .play(_, let g) = e.binary(Data([1])).first else { return XCTFail() }
+        XCTAssertEqual(sends(e.skipped(gen: g, ms: 60)), [["type": "played", "speech_id": "c-1", "ms": 60]])
+        XCTAssertEqual(sends(e.skipped(gen: g, ms: 60)), [["type": "played", "speech_id": "c-1", "ms": 120]])
+        XCTAssertFalse(e.speaking)
+        // A stale generation counts nothing.
+        XCTAssertTrue(e.skipped(gen: g - 1, ms: 60).isEmpty)
     }
 
     func testStopAudioCutsAnswersButNotFillers() {

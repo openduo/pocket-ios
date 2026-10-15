@@ -50,7 +50,7 @@ duoduo identity, iOS conventions. Values come from the ambient tokens
 | `turn tool` | `tool` | 在查 (the step line stays in the working card, §4.4) |
 | `duoduo_said` streaming | `generating` | 正在回复 |
 | playback (ambient) | `tts` | 正在说 |
-| ambient muted | `muted` | 环境模式 · 已静音 |
+| ambient 静音 (listening) | `listening` | 环境模式 · 在听 · 静音 |
 | ambient seat `unowned` / mic revoked | `deaf` | 听不到了 |
 | offline / connecting | `offline` | 连不上 · 正在重试 |
 
@@ -294,7 +294,7 @@ Two presentations of one state:
 | Thinking / tool | `turn` frames | 在想 / 在查, step line below (§4.4) |
 | Speaking | local playback of a `c-` speech | 正在说, caption grows with `duoduo_said` |
 | Filler | local playback of an `s` speech | 正在说, no caption |
-| Muted | user tapped 静音 | `muted` pose, "已静音，房间听不到" |
+| 静音 | user tapped 静音 | 在听; "已静音：还在听，回复只显示在屏幕上" |
 | Seat taken | `role: peer` (another edge in the same room) | "另一台设备在听" + 在这台手机上听 (re-hello) |
 | Deaf | `meta.state: unowned` while on, or mic revoked | `deaf` pose, "听不到了" + 重新打开 |
 | Interrupted | `AVAudioSession` interruption | "来电，已暂停" ; resumes when the system says it may |
@@ -323,7 +323,7 @@ a previously paired device (forget it in iOS Settings › Bluetooth).
 ### 4.9 Settings (screens `settings`)
 
 Grouped list. Editing host/room/port/TLS reruns the onboarding step-2 check inline before saving.
-Sound: 播放语音回复 (default on; the `/live` `audio` switch, §7.1), 保持屏幕常亮 (default off: while
+Sound: 播放语音回复 (default off; with ambient mode off, the `/live` `audio` switch, §7.1), 保持屏幕常亮 (default off: while
 the app is in front the screen does not lock, so the phone can stand out as a speaker), 连着
 AirPods 时用 手机麦克风 (default) / AirPods 麦克风 (§4.6.1).
 Tailscale row: state, node name, IP, 退出登录 (confirm). Diagnostics: export logs (app log +
@@ -398,11 +398,11 @@ Gaps found in the current channel (branch `feature/pocket-voice-note`):
                                     hello while ambient is on        reply is pending, or ambient runs
 ```
 
-- `audio` is the phone's mouth switch, fixed for the connection's life: `1` while the
-  播放语音回复 setting is on and the app is in front or ambient mode runs, else `0`. A change of
-  either (the setting, the app entering or leaving the background) replaces the connection from the
-  cursor; `PocketEngine` treats a connection opened with the other switch as stale. Turning the
-  setting off also stops local playback at once.
+- `audio` is the phone's mouth switch, fixed for the connection's life: `1` while ambient
+  mode runs, or while the 播放语音回复 setting is on and the app is in front, else `0`. A change
+  (the setting, ambient mode, the app entering or leaving the background) replaces the connection from the
+  cursor; `PocketEngine` treats a connection opened with the other switch as stale. With ambient mode
+  off, turning the setting off also stops local playback at once.
 - Live mode: ambient on, the phone holds the capture seat; the room's speech comes here only, paced
   by this phone's `played`. Message mode: ambient off (no capture owner in the room); every
   audio-on surface receives the room's speech as fast as it is synthesized, the channel counts a
@@ -486,8 +486,13 @@ cerebellum, which decides and the channel sends `stop_audio{reason:"barge_in"}`.
   between `PRESS_START` and `PRESS_END` (room mic off; the uplink keeps flowing, since the seat
   lease would expire in a long press otherwise), so the same speech does not enter the brain twice
   (voice note + room judge). Q12. The press also stops playback (§7.4 item 7).
-- 静音 in the ambient view sends `mute{on:false}` and stops sending bytes (privacy: bytes do not leave
-  the phone). After `seat_starve_ms` the seat goes `unowned`; the UI shows muted, not deaf.
+- 静音 in the ambient view silences the phone for this ambient session: new speech is decoded but
+  not played, and each block is reported `played` at once, so the channel's speech ends without
+  waiting and room talk cannot barge in on audio nobody hears; blocks queued before the tap finish
+  at zero volume. The room still hears. The next ambient session starts audible. In
+  ambient mode the audio session is in voice-chat mode, whose call volume cannot reach zero with
+  the volume buttons, so this is the only way to keep the phone quiet while it listens. To stop
+  the room hearing, the user turns ambient mode off.
 
 ### 7.6 Lifecycle and background
 
