@@ -86,3 +86,37 @@ enum TryScript {
           String(format: "(Voice, %.1f s. Try-it mode does not transcribe.)", seconds))
     }
 }
+
+/// A session in 先体验's session viewer sample. Its rows say they are prepared.
+struct TrySession {
+    var key: String
+    var name: String
+    var group: String
+    var tools: [String] = []
+    var rows: [[String: Any]]
+
+    var summary: [String: Any] {
+        ["key": key, "name": name, "group": group, "status": tools.isEmpty ? "idle" : "running", "tools": tools,
+         "last_event_at": ISO8601DateFormatter().string(from: Date())]
+    }
+}
+
+extension TryScript {
+    static var sessions: [TrySession] {
+        let now = ISO8601DateFormatter().string(from: Date())
+        return [
+            TrySession(key: "try-chat", name: L("示例：写周报", "Sample: weekly report"), group: "chat", rows: [
+                ["id": "c1", "at": now, "kind": "message", "text": L("帮我把这周的进展整理成周报", "Turn this week's progress into a report")],
+                ["id": "c2", "at": now, "kind": "tool", "label": "Read", "input_summary": #"{"file_path":"notes/week.md"}"#],
+                ["id": "c3", "at": now, "kind": "reply",
+                 "text": L("这是体验模式的示例会话，内容是事先准备好的。连上你自己的多多后，这里显示它正在进行的会话。",
+                           "This is a sample session in try-it mode; its content is prepared. With your own DuoDuo, this shows its live sessions.")],
+            ]),
+            TrySession(key: "try-job", name: L("示例：每日新闻摘要", "Sample: daily news digest"), group: "job",
+                       tools: ["WebSearch"], rows: [
+                ["id": "j1", "at": now, "kind": "system", "text": L("任务开始（示例）", "Job started (sample)")],
+                ["id": "j2", "at": now, "kind": "tool", "label": "WebSearch", "input_summary": #"{"query":"today's headlines"}"#],
+            ]),
+        ]
+    }
+}

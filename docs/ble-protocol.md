@@ -38,6 +38,35 @@ and it is addressed to 多多.
   the connection returns. Any status other than 202, a 5xx included, is not retried
   automatically: the message is marked failed, and the user's manual resend reuses the same key.
 
+## 2a. Pairing and the device token
+
+The app reaches the channel only as a paired device. The channel's pairing command prints a link,
+`duoduopocket://pair?host=<host>&port=<port>&tls=<0|1>&code=<code>`, and the same link as a QR
+code; the app opens it from a tap, a scan or the pasteboard.
+
+- `POST /api/pair` to that host with `{"code"}` and no token. 200:
+  `{device_id, name, room, room_name, scope, token}`; `scope` is `room` or `sessions`. 400 or 401
+  `invalid_code` (expired, used or unknown) asks for a new link; 400 `bad_body` is a client error.
+  404 means the channel predates pairing: the app says ambient must be upgraded first.
+- The app keeps host, port, TLS, room, room name, scope and device id in UserDefaults and the token
+  in the Keychain. The token names the room; the app no longer chooses one.
+- Every request and the `/live` upgrade carry `Authorization: Bearer <token>`, except
+  `/healthz` and `/api/pair`. The bridge binds the token to the host it was set with, so a
+  pairing request to another host never carries it.
+- HTTP 401 `{"error":"unauthorized"}` or a `/live` close with code 4401: the token is missing or
+  revoked. The app stops reconnecting and shows 需要重新配对 until it pairs again. The state
+  survives a relaunch.
+- Unpaired, or while a pairing holds the bridge's target, the app sends only `/healthz` and
+  `/api/pair`; it never posts a message without a token.
+
+Session viewer (`scope` `sessions`). Over the same `/live` connection the app sends
+`{"type":"sessions_watch","open":<key>|null}` while its drawer or an opened session shows, again
+after each reconnect, and `{"type":"sessions_unwatch"}` once both are closed or the app leaves the
+foreground. The channel answers `sessions` (the whole list), `session_rows` (`initial` replaces
+the thread, other rows append, a row with a shown `id` replaces it, `gap` puts a marker before
+them) and `sessions_error` (`forbidden` or `unavailable`). The viewer is read-only and keeps rows
+in memory only while a session is open.
+
 ## 3. Replies and the event stream
 
 The app holds one `/live?room=…&since=<seq>` connection, `since` being the newest row it holds.
@@ -48,7 +77,7 @@ It carries:
 - `ready {seq, turn, messages, api}`: the end of the replay; `seq` is the cursor to keep, `turn`
   the open turn (its `message_ids` and phase) or null, `messages` every message not yet delivered
   or failed, with its state. `api` is the channel's client-API major, raised only by an
-  incompatible change; the app needs 1 (`clientAPIMajor`).
+  incompatible change; the app needs 2 (`clientAPIMajor`).
 
 The app also sends `{"type":"surface","display","spoken"}` on each new connection and whenever
 the value changes; the capture owner's value applies to room speech in ambient mode.

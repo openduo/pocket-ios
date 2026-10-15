@@ -7,6 +7,7 @@ import SwiftUI
 /// The only root screen (design §3): inline nav bar, banner slot, thread, composer.
 struct ConversationView: View {
     @EnvironmentObject var model: AppModel
+    @ObservedObject private var viewer = SessionViewer.shared
     @State private var sheet: Sheet?
     @State private var bar = BarLayout()
 
@@ -21,7 +22,9 @@ struct ConversationView: View {
                 if model.trying { TryBanner() }
                 Banners()
                 ZStack(alignment: .bottom) {
-                    if model.chat.rows.isEmpty, model.chat.configured, !model.chat.hasHistory {
+                    if viewer.state.openKey != nil {
+                        SessionThreadView(viewer: viewer)
+                    } else if model.chat.rows.isEmpty, model.chat.configured, !model.chat.hasHistory {
                         EmptyState(sheet: $sheet)
                     } else {
                         ThreadView()
@@ -35,7 +38,8 @@ struct ConversationView: View {
                             }
                     }
                 }
-                Composer()
+                // An opened session is read-only.
+                if viewer.state.openKey == nil { Composer() }
             }
             .background(Palette.background.ignoresSafeArea())
             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).midX } action: { bar.centerX = $0 }
@@ -43,8 +47,10 @@ struct ConversationView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Palette.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
-            .toolbar { NavBar(sheet: $sheet, bar: $bar) }
+            .toolbar { NavBar(viewer: viewer, sheet: $sheet, bar: $bar) }
         }
+        .overlay { if viewer.state.drawerOpen { drawer } }
+        .animation(.easeOut(duration: 0.2), value: viewer.state.drawerOpen)
         .overlay { if model.holding { HoldOverlay() } }
         // The 按住说话 bar sits just above the home indicator. Deferring the bottom edge's system
         // gesture delivers a touch there at once instead of after iOS rules out a home swipe;
@@ -58,6 +64,8 @@ struct ConversationView: View {
         }
         .fullScreenCover(isPresented: $model.ambientExpanded) { AmbientView() }
         .accessibilityAction(.magicTap) { HoldToggle.shared.magicTap(model) }
+        // Losing the scope or the pairing closes the viewer; the room thread stays.
+        .onChange(of: model.sessionsEnabled) { _, on in if !on { viewer.showRoom() } }
         .onAppear {
             #if DEBUG
             sheet = Demo.sheet
@@ -65,6 +73,29 @@ struct ConversationView: View {
             #endif
         }
     }
+}
+
+extension ConversationView {
+    /// The drawer over the whole screen; the dimmed side closes it.
+    private var drawer: some View {
+        GeometryReader { g in
+            ZStack(alignment: .leading) {
+                Color.black.opacity(0.3).ignoresSafeArea()
+                    .onTapGesture { viewer.closeDrawer() }
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityLabel(String(localized: "关闭会话列表"))
+                SessionDrawer(viewer: viewer)
+                    .frame(width: min(g.size.width * Self.drawerShare, Self.drawerMaxWidth))
+                    .shadow(color: .black.opacity(0.15), radius: 12, x: 4)
+            }
+        }
+        .transition(.move(edge: .leading).combined(with: .opacity))
+    }
+
+    /// Drawer width: this share of the screen, up to the max, so the room behind stays visible
+    /// as the way back. Display only.
+    static let drawerShare: CGFloat = 0.82
+    static let drawerMaxWidth: CGFloat = 340
 }
 
 // MARK: nav bar
@@ -93,19 +124,35 @@ struct BarLayout: Equatable {
 /// (`BarLayout`).
 struct NavBar: ToolbarContent {
     @EnvironmentObject var model: AppModel
+    @ObservedObject var viewer: SessionViewer
     @Binding var sheet: ConversationView.Sheet?
     @Binding var bar: BarLayout
 
+    /// The opened session, when one replaces the room thread.
+    private var session: (name: String, running: Bool)? {
+        guard let key = viewer.state.openKey else { return nil }
+        let s = viewer.state.openSession
+        return (s?.name ?? key, s?.running ?? false)
+    }
+
     var body: some ToolbarContent {
-        let p = model.presence
+        let p = session.map { s in
+            (pose: Pose.listening, subtitle: s.running ? String(localized: "只读 · 正在运行") : String(localized: "只读"), live: s.running)
+        } ?? model.presence
         ToolbarItem(placement: .topBarLeading) {
-            Button { sheet = .settings } label: { Image(systemName: "gearshape") }
-                .accessibilityLabel(String(localized: "设置"))
-                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxX } action: { bar.leadingMaxX = $0 }
+            HStack(spacing: 16) {
+                if model.sessionsEnabled {
+                    Button { viewer.openDrawer() } label: { Image(systemName: "sidebar.left") }
+                        .accessibilityLabel(String(localized: "会话列表"))
+                }
+                Button { sheet = .settings } label: { Image(systemName: "gearshape") }
+                    .accessibilityLabel(String(localized: "设置"))
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxX } action: { bar.leadingMaxX = $0 }
         }
         ToolbarItem(placement: .principal) {
             VStack(spacing: 0) {
-                Text(String(localized: "多多")).font(.headline).foregroundStyle(Palette.text).lineLimit(1)
+                Text(session?.name ?? String(localized: "多多")).font(.headline).foregroundStyle(Palette.text).lineLimit(1)
                 // The subtitle row takes its height but no width; the text is drawn over it.
                 subtitle(p.subtitle).frame(width: 1).hidden()
                     .overlay {
@@ -118,13 +165,20 @@ struct NavBar: ToolbarContent {
                     .foregroundStyle(p.live ? Palette.brand : (model.chat.connection == .offline ? Palette.attention : Palette.secondary))
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(String(localized: "多多，\(p.subtitle)"))
+            .accessibilityLabel(Text(verbatim: (session?.name ?? String(localized: "多多")) + String(localized: "，") + p.subtitle))
             .accessibilityAddTraits(.isHeader)
         }
         ToolbarItemGroup(placement: .topBarTrailing) {
-            Button { sheet = .passport } label: { PassportChip() }
-                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minX } action: { bar.trailingMinX = $0 }
-            AmbientButton()
+            if session != nil {
+                // The viewer has no ambient controls; this is the way back to the room.
+                Button { viewer.showRoom() } label: { Image(systemName: "xmark") }
+                    .accessibilityLabel(String(localized: "回到房间"))
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minX } action: { bar.trailingMinX = $0 }
+            } else {
+                Button { sheet = .passport } label: { PassportChip() }
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minX } action: { bar.trailingMinX = $0 }
+                AmbientButton()
+            }
         }
     }
 }
@@ -226,7 +280,12 @@ struct Banners: View {
             case nil:
                 EmptyView()
             }
-            if model.tailnet.backend_state == "NeedsLogin" || model.tailnet.backend_state == "NeedsMachineAuth" {
+            if model.needsPairing, !model.trying {
+                Banner(icon: "key.slash", title: String(localized: "需要重新配对"),
+                       detail: String(localized: "多多不再接受这台手机，请让多多生成新的配对链接"), action: String(localized: "配对")) {
+                    model.pairSheet = PairRequest()
+                }
+            } else if model.tailnet.backend_state == "NeedsLogin" || model.tailnet.backend_state == "NeedsMachineAuth" {
                 Banner(icon: "lock.shield", title: String(localized: "需要重新登录 Tailscale"), detail: nil, action: String(localized: "登录")) {
                     TailnetLogin.shared.start(model.tailnet)
                 }
@@ -247,7 +306,7 @@ struct Banners: View {
     }
 
     private var bannerShown: Bool {
-        model.chat.upgrade != nil || model.tailnet.backend_state.hasPrefix("Needs") || model.chat.connection == .offline || model.chat.room?.daemonOK == false
+        model.chat.upgrade != nil || model.needsPairing || model.tailnet.backend_state.hasPrefix("Needs") || model.chat.connection == .offline || model.chat.room?.daemonOK == false
     }
 
     private var cachedText: String {

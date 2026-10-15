@@ -264,6 +264,12 @@ final class TryChannel: @unchecked Sendable {
                 }
             case "hush":
                 frame(["type": "stop_audio"])
+            case "sessions_watch":
+                // The session viewer's sample: a fixed list, and a fixed window for the opened one.
+                frame(["type": "sessions", "sessions": TryScript.sessions.map(\.summary)])
+                if let key = f["open"] as? String, let s = TryScript.sessions.first(where: { $0.key == key }) {
+                    frame(["type": "session_rows", "key": key, "rows": s.rows, "initial": true])
+                }
             default:
                 break
             }

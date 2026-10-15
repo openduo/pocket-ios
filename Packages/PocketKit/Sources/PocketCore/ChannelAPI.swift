@@ -151,18 +151,6 @@ public struct RoomState: Equatable, Sendable {
     }
 }
 
-/// `400` from `/api/state` when the room does not exist: the channel lists its rooms.
-public struct RoomChoices: Equatable, Sendable {
-    public var rooms: [String]
-    public var names: [String: String]
-
-    public static func decode(_ body: Data) -> RoomChoices? {
-        guard let o = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
-              let rooms = o["rooms"] as? [String] else { return nil }
-        return RoomChoices(rooms: rooms, names: o["room_names"] as? [String: String] ?? [:])
-    }
-}
-
 /// `POST /api/messages` 202 body: the message id (the `Idempotency-Key` sent) and the channel's
 /// accept time. A repeated key answers with the first receipt.
 public struct MessageReceipt: Equatable, Sendable {

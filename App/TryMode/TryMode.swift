@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 
 import Foundation
+import PocketCore
 
 /// 先体验: the app runs against `TryChannel`, a scripted channel inside the app, instead of the
 /// user's channel over Tailscale. Every screen and code path above the transport is the real one.
@@ -26,7 +27,9 @@ enum TryMode {
 
     static func enter() {
         try? FileManager.default.removeItem(at: cacheBase)
-        setOverrides(["channel.host": host, "channel.room": room, "channel.tls": false])
+        // The scripted channel needs no pairing; its placeholder device may view sessions.
+        setOverrides(["channel.host": host, "channel.room": room, "channel.tls": false, "channel.roomName": "",
+                      "channel.device": "try", "channel.scope": DeviceScope.sessions.rawValue])
         lock.lock(); on = true; lock.unlock()
         TryChannel.shared.reset()
         AppLog.shared.log("try_mode", ["on": true])
@@ -44,7 +47,7 @@ enum TryMode {
     private static func setOverrides(_ values: [String: Any]) {
         let d = UserDefaults.standard
         var args = d.volatileDomain(forName: UserDefaults.argumentDomain)
-        for k in ["channel.host", "channel.room", "channel.tls"] { args.removeValue(forKey: k) }
+        for k in ChannelSettings.keys { args.removeValue(forKey: k) }
         args.merge(values) { _, new in new }
         d.setVolatileDomain(args, forName: UserDefaults.argumentDomain)
     }
