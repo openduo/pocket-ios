@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -72,7 +73,7 @@ func TestLiveCarriesTextAndBinaryInOrder(t *testing.T) {
 	SetLiveHandler(h)
 	t.Cleanup(func() { LiveClose(); SetLiveHandler(nil) })
 
-	if err := LiveOpen("/live?room=a", 2000); err != nil {
+	if err := LiveOpen("/live?room=a", "", 2000); err != nil {
 		t.Fatal(err)
 	}
 	if !LiveIsOpen() {
@@ -112,7 +113,7 @@ func TestLiveServerCloseIsReportedWithCode(t *testing.T) {
 	h := &liveRecorder{}
 	SetLiveHandler(h)
 	t.Cleanup(func() { LiveClose(); SetLiveHandler(nil) })
-	if err := LiveOpen("/live?room=x", 2000); err != nil {
+	if err := LiveOpen("/live?room=x", "", 2000); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { _, _, c := h.snapshot(); return len(c) == 1 })
@@ -133,7 +134,7 @@ func TestLiveExplicitCloseIsNotReported(t *testing.T) {
 	h := &liveRecorder{}
 	SetLiveHandler(h)
 	t.Cleanup(func() { SetLiveHandler(nil) })
-	if err := LiveOpen("/live?room=a", 2000); err != nil {
+	if err := LiveOpen("/live?room=a", "", 2000); err != nil {
 		t.Fatal(err)
 	}
 	LiveClose()
@@ -158,7 +159,7 @@ func TestLiveCloseDuringDialDropsTheNewSocket(t *testing.T) {
 	SetLiveHandler(h)
 	t.Cleanup(func() { LiveClose(); SetLiveHandler(nil) })
 	done := make(chan error, 1)
-	go func() { done <- LiveOpen("/live?room=a", 2000) }()
+	go func() { done <- LiveOpen("/live?room=a", "", 2000) }()
 	time.Sleep(100 * time.Millisecond)
 	LiveClose()
 	close(release)
@@ -200,11 +201,11 @@ func TestReplacingTheSocketIsQuickAndNotReported(t *testing.T) {
 	SetLiveHandler(h)
 	t.Cleanup(func() { LiveClose(); SetLiveHandler(nil) })
 
-	if err := LiveOpen("/live?room=a", 2000); err != nil {
+	if err := LiveOpen("/live?room=a", "", 2000); err != nil {
 		t.Fatal(err)
 	}
 	t0 := time.Now()
-	if err := LiveOpen("/live?room=a", 2000); err != nil {
+	if err := LiveOpen("/live?room=a", "", 2000); err != nil {
 		t.Fatal(err)
 	}
 	// A graceful close would wait seconds for the silent peer's close frame.
@@ -243,10 +244,72 @@ func TestLivePing(t *testing.T) {
 	if err := LivePing(500); err == nil {
 		t.Fatal("ping without a socket succeeded")
 	}
-	if err := LiveOpen("/live?room=a", 2000); err != nil {
+	if err := LiveOpen("/live?room=a", "", 2000); err != nil {
 		t.Fatal(err)
 	}
 	if err := LivePing(2000); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The upgrade request carries the given headers (the device token).
+func TestLiveOpenSendsHeaders(t *testing.T) {
+	got := make(chan string, 1)
+	setupUpstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- r.Header.Get("Authorization")
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		_, _, _ = c.Read(context.Background())
+	}))
+	t.Cleanup(func() { LiveClose() })
+	if err := LiveOpen("/live", `{"Authorization":"Bearer t1"}`, 2000); err != nil {
+		t.Fatal(err)
+	}
+	if a := <-got; a != "Bearer t1" {
+		t.Fatalf("Authorization = %q", a)
+	}
+}
+
+// A 401 on the upgrade is reported as unauthorized, so the app stops redialling.
+func TestLiveOpenUnauthorized(t *testing.T) {
+	setupUpstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+	}))
+	err := LiveOpen("/live", "", 2000)
+	if err == nil || !strings.HasPrefix(err.Error(), ErrLiveUnauthorized) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// The channel's 4401 close is reported with its code.
+func TestLiveCloseUnauthorizedCode(t *testing.T) {
+	setupUpstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		c.Close(websocket.StatusCode(4401), "unauthorized")
+	}))
+	h := &liveRecorder{}
+	SetLiveHandler(h)
+	t.Cleanup(func() { LiveClose(); SetLiveHandler(nil) })
+	if err := LiveOpen("/live", "", 2000); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { _, _, c := h.snapshot(); return len(c) == 1 })
+	if _, _, c := h.snapshot(); !strings.Contains(c[0], "4401") {
+		t.Fatalf("close reason %q lacks 4401", c[0])
+	}
+}
+
+// A malformed header object fails before dialling.
+func TestLiveOpenBadHeaders(t *testing.T) {
+	silentPeer(t)
+	if err := LiveOpen("/live", "{", 2000); err == nil {
+		t.Fatal("bad headers accepted")
 	}
 }

@@ -42,11 +42,22 @@ var (
 	target  chanTarget
 )
 
-// chanTarget is the channel host that native requests and both sockets reach.
+// chanTarget is the channel host that native requests and both sockets reach,
+// with the device token for that host. The token is bound to its host so a
+// request never carries one host's token to another: a pairing request points
+// the bridge at a new host with no token.
 type chanTarget struct {
-	Host string
-	Port int
-	TLS  bool
+	Host  string
+	Port  int
+	TLS   bool
+	Token string
+}
+
+// authorize adds the target's device token unless the caller set the header.
+func (t chanTarget) authorize(h http.Header) {
+	if t.Token != "" && h.Get("Authorization") == "" {
+		h.Set("Authorization", "Bearer "+t.Token)
+	}
 }
 
 func (t chanTarget) hostPort() string {
@@ -205,10 +216,11 @@ func Up(timeoutMs int64) error {
 	return err
 }
 
-// SetTarget sets the channel host. Host is a tailnet name or address.
-func SetTarget(host string, port int, useTLS bool) {
+// SetTarget sets the channel host and the device token sent to it (empty:
+// none). Host is a tailnet name or address.
+func SetTarget(host string, port int, useTLS bool, token string) {
 	mu.Lock()
-	target = chanTarget{Host: strings.TrimSpace(host), Port: port, TLS: useTLS}
+	target = chanTarget{Host: strings.TrimSpace(host), Port: port, TLS: useTLS, Token: token}
 	mu.Unlock()
 }
 
@@ -255,13 +267,13 @@ func Do(method, path, headersJSON string, body []byte, timeoutMs int64) (*Respon
 	if c == nil {
 		return nil, errors.New("tsbridge: not started")
 	}
-	base := BaseURL()
-	if base == "" {
+	t := currentTarget()
+	if t.Host == "" {
 		return nil, errors.New("tsbridge: no target host")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, method, base+path, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, t.origin()+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -274,6 +286,7 @@ func Do(method, path, headersJSON string, body []byte, timeoutMs int64) (*Respon
 			req.Header.Set(k, v)
 		}
 	}
+	t.authorize(req.Header)
 	req.ContentLength = int64(len(body))
 	res, err := c.Do(req)
 	if err != nil {

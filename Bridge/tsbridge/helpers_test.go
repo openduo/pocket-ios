@@ -22,5 +22,5 @@ func setupUpstream(t *testing.T, h http.Handler) {
 	tr = http.DefaultTransport.(*http.Transport).Clone()
 	client = &http.Client{Transport: tr}
 	mu.Unlock()
-	SetTarget("localhost", port, false)
+	SetTarget("localhost", port, false, "")
 }
