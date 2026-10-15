@@ -46,7 +46,8 @@ struct PocketApp: App {
                 // `duoduopocket://pair?...` pairs; the share extension opens the app with any
                 // other URL of the scheme, with a share waiting in the inbox.
                 .onOpenURL { url in model.open(url) }
-                .sheet(item: $model.pairSheet) { PairingSheet(request: $0) }
+                // This sheet sits outside `RootView`, so it needs the model handed in.
+                .sheet(item: $model.pairSheet) { PairingSheet(request: $0).environmentObject(model) }
         }
         .onChange(of: phase) { _, p in
             let name: String = switch p {

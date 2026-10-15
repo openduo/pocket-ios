@@ -4,10 +4,15 @@
 import Foundation
 
 /// What a paired device may do (`AmbientDeviceScope`). `room`: its one bound room. `sessions`:
-/// that, plus the read-only session viewer.
+/// that, plus the session viewer. `notify`: that, plus notifications to the sessions that accept
+/// them.
 public enum DeviceScope: String, Codable, Equatable, Sendable {
     case room
     case sessions
+    case notify
+
+    /// The session viewer is open to this device.
+    public var views: Bool { self != .room }
 }
 
 /// A pairing link: `duoduopocket://pair?host=<host>&port=<port>&tls=<0|1>&code=<code>`. The

@@ -4,7 +4,7 @@
 import Foundation
 import PocketCore
 
-/// The read-only session viewer (devices with the `sessions` scope): the drawer's list and the
+/// The session viewer (devices with the `sessions` or `notify` scope): the drawer's list and the
 /// opened session, carried on the room's `/live` connection. State and frame rules are
 /// `SessionViewerState`; this sends its frames and publishes it for the views.
 ///
@@ -25,6 +25,10 @@ final class SessionViewer: ObservableObject {
     func closeDrawer() { mutate { $0.closeDrawer() } }
     func open(_ key: String) { mutate { $0.open(key) } }
     func closeSession() { mutate { $0.closeSession() } }
+
+    /// Sends a notification to the open session; the outcome arrives in `state.notifyOutcome`.
+    func notify(_ text: String) { mutate { $0.notify(text, id: UUID().uuidString) } }
+    func clearNotifyOutcome() { mutate { $0.clearNotifyOutcome(); return nil } }
 
     /// Back to the room thread: the session and the drawer close.
     func showRoom() {
@@ -48,6 +52,7 @@ final class SessionViewer: ObservableObject {
     func setActive(_ a: Bool) {
         guard a != active else { return }
         if !a, state.watching { send(["type": "sessions_unwatch"]) }
+        if !a { mutate { $0.dropPendingNotify(); return nil } }
         active = a
         if a, state.watching { send(state.watchFrame) }
     }
@@ -64,7 +69,10 @@ final class SessionViewer: ObservableObject {
 
     /// A new `/live` connection opened (any thread): it starts unwatched.
     nonisolated func liveOpened() {
-        Task { @MainActor in if state.watching { send(state.watchFrame) } }
+        Task { @MainActor in
+            mutate { $0.dropPendingNotify(); return nil }
+            if state.watching { send(state.watchFrame) }
+        }
     }
 
     /// Pairing changed or the device lost its scope: nothing of the old view stays.

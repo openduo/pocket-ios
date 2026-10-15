@@ -142,6 +142,7 @@ final class SessionViewerTests: XCTestCase {
         XCTAssertEqual(s("ambient:pocket:x").source, .room)
         XCTAssertEqual(s("job:scan.1").source, .job)
         XCTAssertEqual(s("tether:grok").source, .other("tether"))
+        XCTAssertEqual(s("plain").source, .other(""))
         XCTAssertTrue(s("job:a.1", "active").running)
         let ordered = [s("lark:old", "idle", "2026-10-14T00:00:00.000Z"), s("lark:never"),
                        s("lark:new", "idle", "2026-10-15T00:00:00.000Z"), s("lark:busy", "running", "2026-10-01T00:00:00.000Z")]
@@ -155,5 +156,48 @@ final class SessionViewerTests: XCTestCase {
         XCTAssertEqual(shown.map(\.id), ["row:1", "steps:2", "gap:g", "steps:4", "row:5"])
         guard case .steps(_, let rows) = shown[1] else { return XCTFail("\(shown)") }
         XCTAssertEqual(rows.map(\.id), ["2", "3"])
+    }
+
+    func testNotifyRowsAndSummaries() throws {
+        let e = try event(#"{"type":"sessions","sessions":[{"key":"lark:a:b","name":"main","group":"chat","status":"idle","tools":[],"last_event_at":null,"notify":true},{"key":"job:x.1","name":"x","group":"job","status":"idle","tools":[],"last_event_at":null}]}"#)
+        guard case .sessions(let list) = e else { return XCTFail("\(e)") }
+        XCTAssertEqual(list.map(\.notify), [true, false])
+        let rows = try event(#"{"type":"session_rows","key":"lark:a:b","rows":[{"id":"1","at":"t","kind":"notify","text":"hi","from":"job:x.1","from_label":"随身 · phone"}]}"#)
+        guard case .rows(_, let r, _, _) = rows else { return XCTFail("\(rows)") }
+        XCTAssertEqual(r[0].kind, .notify)
+        XCTAssertEqual(r[0].fromLabel, "随身 · phone")
+        XCTAssertNil(SessionEvent.decode(try frame(#"{"type":"session_rows","key":"k","rows":[{"id":"1","at":"t","kind":"notify","from_label":3}]}"#)))
+    }
+
+    func testNotifySendAndResult() throws {
+        var st = SessionViewerState()
+        _ = st.open("lark:a:b")
+        _ = st.apply(.sessions([SessionSummary(key: "lark:a:b", name: "main", group: .chat, status: "idle", notify: true),
+                                SessionSummary(key: "job:x.1", name: "x", group: .job, status: "idle")]))
+        XCTAssertNil(st.notify("   ", id: "n0"))
+        let f = try XCTUnwrap(st.notify(" 数据更新了 ", id: "n1"))
+        XCTAssertEqual(f["type"] as? String, "session_notify")
+        XCTAssertEqual(f["key"] as? String, "lark:a:b")
+        XCTAssertEqual(f["text"] as? String, "数据更新了")
+        XCTAssertNil(st.notify("again", id: "n2"), "one in flight at a time")
+        XCTAssertFalse(st.apply(try event(#"{"type":"session_notify_result","id":"other","ok":true}"#)))
+        XCTAssertTrue(st.apply(try event(#"{"type":"session_notify_result","id":"n1","ok":false,"reason":"not_notifiable"}"#)))
+        XCTAssertEqual(st.notifyOutcome, .failed(.notNotifiable))
+        XCTAssertNil(st.pendingNotify)
+        _ = st.open("job:x.1")
+        XCTAssertNil(st.notify("hi", id: "n3"), "a job that does not take notifications")
+        XCTAssertTrue(SessionEvent.isViewerFrame(["type": "session_notify_result"]))
+    }
+
+    func testLostConnectionSettlesThePendingNotify() throws {
+        var st = SessionViewerState()
+        _ = st.open("lark:a:b")
+        _ = st.apply(.sessions([SessionSummary(key: "lark:a:b", name: "main", group: .chat, status: "idle", notify: true)]))
+        _ = try XCTUnwrap(st.notify("hi", id: "n1"))
+        st.dropPendingNotify()
+        XCTAssertNil(st.pendingNotify)
+        XCTAssertEqual(st.notifyOutcome, .failed(.failed))
+        XCTAssertFalse(st.apply(try event(#"{"type":"session_notify_result","id":"n1","ok":true}"#)), "a late result is ignored")
+        XCTAssertNotNil(st.notify("again", id: "n2"), "another can be sent")
     }
 }

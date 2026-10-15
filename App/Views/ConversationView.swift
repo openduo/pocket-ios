@@ -38,8 +38,13 @@ struct ConversationView: View {
                             }
                     }
                 }
-                // An opened session is read-only.
-                if viewer.state.openKey == nil { Composer() }
+                // An opened session is read-only; one that takes notifications gets the notify bar,
+                // never the room's composer.
+                if viewer.state.openKey == nil {
+                    Composer()
+                } else if model.notifyEnabled, let s = viewer.state.openSession, s.notify {
+                    NotifyBar(viewer: viewer, session: s)
+                }
             }
             .background(Palette.background.ignoresSafeArea())
             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).midX } action: { bar.centerX = $0 }

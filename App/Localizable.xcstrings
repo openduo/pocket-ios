@@ -865,6 +865,16 @@
         }
       }
     },
+    "多多会在那个会话里处理这条通知": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "DuoDuo handles this notification in that session"
+          }
+        }
+      }
+    },
     "多多暂时无法回复": {
       "localizations": {
         "en": {
@@ -881,6 +891,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "DuoDuo is replying: %@"
+          }
+        }
+      }
+    },
+    "多多那边已经没有这个会话了": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "DuoDuo no longer has this session"
           }
         }
       }
@@ -1937,6 +1957,16 @@
         }
       }
     },
+    "没有送到，请稍后再试": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not delivered; try again later"
+          }
+        }
+      }
+    },
     "浅色": {
       "localizations": {
         "en": {
@@ -2307,6 +2337,26 @@
         }
       }
     },
+    "给 %@ 发通知（%@）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notify %1$@ (%2$@)"
+          }
+        }
+      }
+    },
+    "给 %@ 发通知": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notify %@"
+          }
+        }
+      }
+    },
     "继续": {
       "localizations": {
         "en": {
@@ -2527,6 +2577,16 @@
         }
       }
     },
+    "这台设备没有发通知的权限，需要重新配对": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This device may not send notifications; pair it again"
+          }
+        }
+      }
+    },
     "这条太长，读不了": {
       "localizations": {
         "en": {
@@ -2633,6 +2693,36 @@
           "stringUnit": {
             "state": "translated",
             "value": "Log Out"
+          }
+        }
+      }
+    },
+    "通知": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification"
+          }
+        }
+      }
+    },
+    "通知 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notify %@"
+          }
+        }
+      }
+    },
+    "通知 · 来自「%@」": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification · from “%@”"
           }
         }
       }
@@ -3269,12 +3359,32 @@
         }
       }
     },
+    "要告诉它什么": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What should it know"
+          }
+        }
+      }
+    },
     "让多多生成一个配对链接，然后在这台手机上打开链接，或扫描它的二维码。": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Ask DuoDuo for a pairing link, then open it on this phone or scan its QR code."
+          }
+        }
+      }
+    },
+    "这个会话不接收通知": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This session does not take notifications"
           }
         }
       }

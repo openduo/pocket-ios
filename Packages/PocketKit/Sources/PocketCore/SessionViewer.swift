@@ -18,14 +18,18 @@ public struct SessionSummary: Identifiable, Equatable, Sendable {
     /// Tools running right now; empty when none.
     public var tools: [String]
     public var lastEventAt: String?
+    /// The session accepts a notification: a chat session, or a job kept alive between runs.
+    public var notify: Bool
 
-    public init(key: String, name: String, group: Group, status: String, tools: [String] = [], lastEventAt: String? = nil) {
+    public init(key: String, name: String, group: Group, status: String, tools: [String] = [], lastEventAt: String? = nil,
+                notify: Bool = false) {
         self.key = key
         self.name = name
         self.group = group
         self.status = status
         self.tools = tools
         self.lastEventAt = lastEventAt
+        self.notify = notify
     }
 
     public var id: String { key }
@@ -42,7 +46,8 @@ public struct SessionSummary: Identifiable, Equatable, Sendable {
     }
 
     public var source: Source {
-        let prefix = key.split(separator: ":", maxSplits: 1).first.map(String.init) ?? ""
+        let parts = key.split(separator: ":", maxSplits: 1)
+        let prefix = parts.count == 2 ? String(parts[0]) : ""
         switch prefix {
         case "lark", "feishu": return .feishu
         case "ambient": return .room
@@ -65,7 +70,9 @@ public struct SessionSummary: Identifiable, Equatable, Sendable {
               let status = o["status"] as? String, let tools = o["tools"] as? [String] else { return nil }
         let last = o["last_event_at"]
         guard last == nil || last is NSNull || last is String else { return nil }
-        return SessionSummary(key: key, name: name, group: group, status: status, tools: tools, lastEventAt: last as? String)
+        if let n = o["notify"], !(n is Bool) { return nil }
+        return SessionSummary(key: key, name: name, group: group, status: status, tools: tools, lastEventAt: last as? String,
+                              notify: o["notify"] as? Bool ?? false)
     }
 }
 
@@ -80,6 +87,9 @@ public struct SessionRow: Identifiable, Equatable, Sendable {
         case tool
         /// A command receipt or a job start.
         case system
+        /// A notification delivered from elsewhere: `from` the sending session, `fromLabel` the
+        /// sender as it named itself.
+        case notify
     }
 
     public var id: String
@@ -90,9 +100,11 @@ public struct SessionRow: Identifiable, Equatable, Sendable {
     public var label: String?
     public var inputSummary: String?
     public var failed: Bool
+    public var fromLabel: String?
 
     public init(id: String, at: String, kind: Kind, text: String? = nil, from: String? = nil, label: String? = nil,
-                inputSummary: String? = nil, failed: Bool = false) {
+                inputSummary: String? = nil, failed: Bool = false, fromLabel: String? = nil) {
+        self.fromLabel = fromLabel
         self.id = id
         self.at = at
         self.kind = kind
@@ -113,12 +125,33 @@ public struct SessionRow: Identifiable, Equatable, Sendable {
     static func decode(_ o: [String: Any]) -> SessionRow? {
         guard let id = o["id"] as? String, let at = o["at"] as? String,
               let kind = (o["kind"] as? String).flatMap(Kind.init(rawValue:)) else { return nil }
-        for k in ["text", "from", "label", "input_summary"] where o[k] != nil && !(o[k] is String) { return nil }
+        for k in ["text", "from", "label", "input_summary", "from_label"] where o[k] != nil && !(o[k] is String) { return nil }
         if let f = o["failed"], !(f is Bool) { return nil }
         return SessionRow(id: id, at: at, kind: kind, text: o["text"] as? String, from: o["from"] as? String,
                           label: o["label"] as? String, inputSummary: o["input_summary"] as? String,
-                          failed: o["failed"] as? Bool ?? false)
+                          failed: o["failed"] as? Bool ?? false, fromLabel: o["from_label"] as? String)
     }
+}
+
+/// Why a notification was not delivered (`session_notify_result`).
+public enum NotifyFailure: String, Equatable, Sendable {
+    /// The device lacks the `notify` scope.
+    case forbidden
+    /// The session does not take notifications.
+    case notNotifiable = "not_notifiable"
+    /// The daemon no longer has the session.
+    case notFound = "not_found"
+    case failed
+}
+
+public enum NotifyOutcome: Equatable, Sendable {
+    case sent
+    case failed(NotifyFailure)
+}
+
+/// The uplink frame that sends a notification to session `key`; `id` correlates the result.
+public func sessionNotifyFrame(id: String, key: String, text: String) -> [String: Any] {
+    ["type": "session_notify", "id": id, "key": key, "text": text]
 }
 
 /// Why the viewer is not available on this connection (`sessions_error`).
@@ -137,6 +170,8 @@ public enum SessionEvent: Equatable, Sendable {
     /// thread). `gap`: the daemon skipped events before these rows.
     case rows(key: String, rows: [SessionRow], initial: Bool, gap: Bool)
     case error(SessionsError)
+    /// The channel's answer to a `session_notify`; `reason` is nil when it was delivered.
+    case notifyResult(id: String, reason: NotifyFailure?)
 
     /// Decodes a viewer frame; nil for any other frame or a malformed one.
     public static func decode(_ f: [String: Any]) -> SessionEvent? {
@@ -152,6 +187,10 @@ public enum SessionEvent: Equatable, Sendable {
             return .rows(key: key, rows: rows, initial: f["initial"] as? Bool ?? false, gap: f["gap"] as? Bool ?? false)
         case "sessions_error":
             return (f["reason"] as? String).flatMap(SessionsError.init(rawValue:)).map { .error($0) }
+        case "session_notify_result":
+            guard let id = f["id"] as? String, let ok = f["ok"] as? Bool else { return nil }
+            if ok { return .notifyResult(id: id, reason: nil) }
+            return (f["reason"] as? String).flatMap(NotifyFailure.init(rawValue:)).map { .notifyResult(id: id, reason: $0) }
         default:
             return nil
         }
@@ -159,7 +198,7 @@ public enum SessionEvent: Equatable, Sendable {
 
     /// Whether a frame type belongs to the viewer (so it is not handed to the room thread).
     public static func isViewerFrame(_ f: [String: Any]) -> Bool {
-        ["sessions", "session_rows", "sessions_error"].contains(f["type"] as? String ?? "")
+        ["sessions", "session_rows", "sessions_error", "session_notify_result"].contains(f["type"] as? String ?? "")
     }
 }
 
@@ -195,8 +234,33 @@ public struct SessionViewerState: Equatable, Sendable {
     /// The open session's initial window arrived.
     public private(set) var loaded = false
     public private(set) var error: SessionsError?
+    /// A notification sent and not yet answered (its correlation id).
+    public private(set) var pendingNotify: String?
+    /// The last answered notification. Cleared by the next send.
+    public private(set) var notifyOutcome: NotifyOutcome?
 
     public init() {}
+
+    /// Sends `text` to the open session when it takes notifications; returns the frame, or nil
+    /// when nothing may be sent (no session open, it does not accept, empty text, one in flight).
+    public mutating func notify(_ text: String, id: String) -> [String: Any]? {
+        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let s = openSession, s.notify, !body.isEmpty, pendingNotify == nil else { return nil }
+        pendingNotify = id
+        notifyOutcome = nil
+        return sessionNotifyFrame(id: id, key: s.key, text: body)
+    }
+
+    /// The outcome was shown; the next sheet starts clean.
+    public mutating func clearNotifyOutcome() { notifyOutcome = nil }
+
+    /// The connection that would carry the result is gone: settle the send as failed, as the
+    /// page does, so another can be sent. It may still have been delivered.
+    public mutating func dropPendingNotify() {
+        guard pendingNotify != nil else { return }
+        pendingNotify = nil
+        notifyOutcome = .failed(.failed)
+    }
 
     public var watching: Bool { drawerOpen || openKey != nil }
 
@@ -282,6 +346,11 @@ public struct SessionViewerState: Equatable, Sendable {
                 }
             }
             error = nil
+            return true
+        case .notifyResult(let id, let reason):
+            guard id == pendingNotify else { return false }
+            pendingNotify = nil
+            notifyOutcome = reason.map(NotifyOutcome.failed) ?? .sent
             return true
         }
     }

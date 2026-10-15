@@ -82,13 +82,7 @@ struct SessionDrawer: View {
 
     /// 「飞书 · 18:01」: where the session lives, then its last activity.
     private func detail(_ s: SessionSummary) -> String {
-        let source: String? = switch s.source {
-        case .feishu: String(localized: "飞书")
-        case .room: String(localized: "房间")
-        case .job: nil
-        case .other(let prefix): prefix.isEmpty ? nil : prefix
-        }
-        return [source, s.lastEvent.map(activityText)].compactMap { $0 }.joined(separator: " · ")
+        [sourceName(s), s.lastEvent.map(activityText)].compactMap { $0 }.joined(separator: " · ")
     }
 }
 
@@ -188,6 +182,8 @@ private struct SessionItemView: View {
                 }
             case .reply:
                 ReplyBubble(text: r.text ?? "", at: r.date)
+            case .notify:
+                NotifyCard(text: r.text ?? "", from: r.fromLabel ?? source(r.from), at: r.date)
             case .tool:
                 SessionSteps(rows: [r])
             case .system:
@@ -209,6 +205,139 @@ private struct SessionItemView: View {
         }
         let parts = key.split(separator: ":")
         return parts.count > 1 ? String(parts[1]) : key
+    }
+}
+
+/// A notification that entered the session, from another session or a device: a card with a
+/// bell, never a chat bubble, so it does not read as part of a conversation.
+private struct NotifyCard: View {
+    var text: String
+    var from: String?
+    var at: Date?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                Image(systemName: "bell.fill").font(.caption2)
+                Text(from.map { String(localized: "通知 · 来自「\($0)」") } ?? String(localized: "通知"))
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if let at { Text(hm(at)).monospacedDigit() }
+            }
+            .font(.caption)
+            .foregroundStyle(Palette.notice)
+            Text(text).font(.subheadline).foregroundStyle(Palette.text).textSelection(.enabled)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Palette.notice.opacity(0.45)))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Where a session lives, for the drawer and the notify bar: 飞书, 房间, nothing for a job.
+func sourceName(_ s: SessionSummary) -> String? {
+    switch s.source {
+    case .feishu: String(localized: "飞书")
+    case .room: String(localized: "房间")
+    case .job: nil
+    case .other(let prefix): prefix.isEmpty ? nil : prefix
+    }
+}
+
+/// Under a session that takes notifications, in place of the room's composer: one bar that names
+/// the target, 「🔔 给 main 发通知（飞书）」, and opens the notify sheet.
+struct NotifyBar: View {
+    @ObservedObject var viewer: SessionViewer
+    let session: SessionSummary
+    @State private var composing = false
+
+    var body: some View {
+        Button { composing = true } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "bell")
+                Text(title).lineLimit(1)
+            }
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(Palette.notice)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Palette.notice.opacity(0.6)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .sheet(isPresented: $composing) {
+            NotifySheet(viewer: viewer, session: session)
+                .presentationDetents([.medium])
+        }
+    }
+
+    private var title: String {
+        if let src = sourceName(session) { return String(localized: "给 \(session.name) 发通知（\(src)）") }
+        return String(localized: "给 \(session.name) 发通知")
+    }
+}
+
+/// Writing a notification: the target named in the title, what happens to it said once, text
+/// only. Closes when the channel confirms delivery; a refusal stays on screen with its reason.
+private struct NotifySheet: View {
+    @ObservedObject var viewer: SessionViewer
+    let session: SessionSummary
+    @State private var text = ""
+    @FocusState private var focused: Bool
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let st = viewer.state
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(String(localized: "多多会在那个会话里处理这条通知"))
+                    .font(.footnote).foregroundStyle(Palette.secondary)
+                TextField(String(localized: "要告诉它什么"), text: $text, axis: .vertical)
+                    .lineLimit(3...8)
+                    .focused($focused)
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.cell))
+                if case .failed(let reason) = st.notifyOutcome {
+                    Text(failure(reason)).font(.footnote).foregroundStyle(Palette.attention)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(16)
+            .navigationTitle(String(localized: "通知 \(session.name)"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(String(localized: "取消")) { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if st.pendingNotify != nil {
+                        ProgressView()
+                    } else {
+                        Button(String(localized: "发送")) { viewer.notify(text) }
+                            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+            }
+        }
+        .onAppear {
+            viewer.clearNotifyOutcome()
+            focused = true
+        }
+        .onChange(of: st.notifyOutcome) { _, outcome in
+            if outcome == .sent { dismiss() }
+        }
+    }
+
+    private func failure(_ r: NotifyFailure) -> String {
+        switch r {
+        case .forbidden: String(localized: "这台设备没有发通知的权限，需要重新配对")
+        case .notNotifiable: String(localized: "这个会话不接收通知")
+        case .notFound: String(localized: "多多那边已经没有这个会话了")
+        case .failed: String(localized: "没有送到，请稍后再试")
+        }
     }
 }
 

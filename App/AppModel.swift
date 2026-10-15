@@ -163,8 +163,11 @@ final class AppModel: ObservableObject {
 
     // MARK: pairing
 
-    /// The session viewer is offered: the device has the `sessions` scope and is not rejected.
-    var sessionsEnabled: Bool { settings.scope == .sessions && settings.isComplete && !needsPairing }
+    /// The session viewer is offered: the device has the `sessions` or `notify` scope and is not
+    /// rejected.
+    var sessionsEnabled: Bool { settings.scope.views && settings.isComplete && !needsPairing }
+    /// The device may send notifications to the sessions that accept them.
+    var notifyEnabled: Bool { sessionsEnabled && settings.scope == .notify }
 
     /// A URL of the app's scheme: `pair` opens pairing, everything else is the share inbox.
     func open(_ url: URL) {

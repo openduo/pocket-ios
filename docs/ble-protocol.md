@@ -59,13 +59,22 @@ code; the app opens it from a tap, a scan or the pasteboard.
 - Unpaired, or while a pairing holds the bridge's target, the app sends only `/healthz` and
   `/api/pair`; it never posts a message without a token.
 
-Session viewer (`scope` `sessions`). Over the same `/live` connection the app sends
+Session viewer (`scope` `sessions` or `notify`). Over the same `/live` connection the app sends
 `{"type":"sessions_watch","open":<key>|null}` while its drawer or an opened session shows, again
 after each reconnect, and `{"type":"sessions_unwatch"}` once both are closed or the app leaves the
 foreground. The channel answers `sessions` (the whole list), `session_rows` (`initial` replaces
 the thread, other rows append, a row with a shown `id` replaces it, `gap` puts a marker before
-them) and `sessions_error` (`forbidden` or `unavailable`). The viewer is read-only and keeps rows
-in memory only while a session is open.
+them) and `sessions_error` (`forbidden` or `unavailable`). The viewer keeps rows in memory only
+while a session is open. A row of kind `notify` is a notification delivered from elsewhere
+(`from` the sending session, `from_label` how the sender named itself); the app draws it as a
+notification card, not a chat bubble.
+
+Notifications (`scope` `notify`). A listed session with `notify: true` (a chat session, or a job
+kept alive between runs) shows a notify bar instead of a composer. The app sends
+`{"type":"session_notify","id":<uuid>,"key":<session key>,"text":<text>}`, one at a time, and the
+channel answers `{"type":"session_notify_result","id":…,"ok":true}` or `ok:false` with `reason`
+`forbidden`, `not_notifiable`, `not_found` or `failed`. The channel names the sender to the
+session as `<room name> · <device name>`.
 
 ## 3. Replies and the event stream
 

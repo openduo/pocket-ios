@@ -93,21 +93,28 @@ struct TrySession {
     var name: String
     var group: String
     var tools: [String] = []
+    var notify = false
     var rows: [[String: Any]]
 
     var summary: [String: Any] {
         ["key": key, "name": name, "group": group, "status": tools.isEmpty ? "idle" : "running", "tools": tools,
-         "last_event_at": ISO8601DateFormatter().string(from: Date())]
+         "last_event_at": ISO8601DateFormatter().string(from: Date()), "notify": notify]
     }
 }
 
 extension TryScript {
+    /// How the sample names a notification sent from this phone.
+    static var notifySource: String { L("体验 · 这台手机", "Try · this phone") }
+
     static var sessions: [TrySession] {
         let now = ISO8601DateFormatter().string(from: Date())
         return [
-            TrySession(key: "try-chat", name: L("示例：写周报", "Sample: weekly report"), group: "chat", rows: [
+            TrySession(key: "try-chat", name: L("示例：写周报", "Sample: weekly report"), group: "chat", notify: true, rows: [
                 ["id": "c1", "at": now, "kind": "message", "text": L("帮我把这周的进展整理成周报", "Turn this week's progress into a report")],
                 ["id": "c2", "at": now, "kind": "tool", "label": "Read", "input_summary": #"{"file_path":"notes/week.md"}"#],
+                ["id": "c2b", "at": now, "kind": "tool", "label": "Bash", "input_summary": #"{"description":"List this week's commits"}"#],
+                ["id": "c2c", "at": now, "kind": "notify", "from_label": L("示例：每日新闻摘要", "Sample: daily news digest"),
+                 "text": L("今天的新闻摘要写好了，放在 news/today.md。", "Today's digest is ready in news/today.md.")],
                 ["id": "c3", "at": now, "kind": "reply",
                  "text": L("这是体验模式的示例会话，内容是事先准备好的。连上你自己的多多后，这里显示它正在进行的会话。",
                            "This is a sample session in try-it mode; its content is prepared. With your own DuoDuo, this shows its live sessions.")],

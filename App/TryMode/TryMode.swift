@@ -27,9 +27,9 @@ enum TryMode {
 
     static func enter() {
         try? FileManager.default.removeItem(at: cacheBase)
-        // The scripted channel needs no pairing; its placeholder device may view sessions.
+        // The scripted channel needs no pairing; its placeholder device may view and notify sessions.
         setOverrides(["channel.host": host, "channel.room": room, "channel.tls": false, "channel.roomName": "",
-                      "channel.device": "try", "channel.scope": DeviceScope.sessions.rawValue])
+                      "channel.device": "try", "channel.scope": DeviceScope.notify.rawValue])
         lock.lock(); on = true; lock.unlock()
         TryChannel.shared.reset()
         AppLog.shared.log("try_mode", ["on": true])
