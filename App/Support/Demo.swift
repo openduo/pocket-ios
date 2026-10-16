@@ -147,6 +147,8 @@ enum Demo {
         var args = d.volatileDomain(forName: UserDefaults.argumentDomain)
         args["channel.host"] = "your-host.tailnet.ts.net"
         args["channel.room"] = "study"
+        args["channel.roomName"] = L("书房", "Study")
+        args["channel.device"] = "demo"
         d.setVolatileDomain(args, forName: UserDefaults.argumentDomain)
         m.settings = ChannelSettings.load()
         m.persistComposerMode = false
@@ -302,7 +304,7 @@ enum Demo {
         case "onboard-tailnet":
             m.tailnet = TailnetStatus(backend_state: "NeedsLogin", auth_url: "https://login.tailscale.com/a/demo", ips: nil, dns_name: nil, error: nil)
         case "onboard-connect":
-            break  // Tailscale is Running, so onboarding opens at step 2; see `connectionCheck`.
+            break  // Tailscale is Running, so onboarding opens at the pairing step.
         case "live-long-answer":
             playLongAnswer(m, chat: chat)
             return
@@ -445,14 +447,6 @@ enum Demo {
             UIColor.white.withAlphaComponent(0.8).setFill()
             ctx.cgContext.fillEllipse(in: CGRect(x: 36, y: 10, width: 16, height: 16))
         }
-    }
-}
-extension ConnectionCheck {
-    /// The passed checklist for fixtures, instead of a live check against the placeholder host.
-    func showDemoPass() {
-        items = [.init(id: 0, text: String(localized: "Tailscale 已连接"), state: .ok),
-                 .init(id: 1, text: String(localized: "频道可达 · \(38) ms"), state: .ok),
-                 .init(id: 2, text: String(localized: "房间「\(Demo.L("书房", "Study"))」存在") + String(localized: "，多多在线"), state: .ok)]
     }
 }
 #endif

@@ -9,7 +9,9 @@ probes on an iPhone XS Max and the Passport during development.
 | Name | Value | Kind | Basis |
 |---|---|---|---|
 | `protoMajor` / `protoMinor` | 1 / 2 | fixed | `docs/ble-protocol.md` §7; minor 1 adds WORK, minor 2 adds the APP_STATE language byte |
-| `clientAPIMajor` | 1 | fixed | the channel's client-API major this app speaks; a `ready` with a lower or absent `api` means the channel must be upgraded (`docs/ble-protocol.md` §3) |
+| `clientAPIMajor` | 2 | fixed | the channel's client-API major this app speaks; a `ready` with a lower or absent `api` means the channel must be upgraded (`docs/ble-protocol.md` §3). Major 2: every data route needs the device token from pairing, and the token names the room |
+| `DeviceAuth.liveCloseCode` | 4401 | fixed | the channel's `/live` close code for a missing or revoked device token (application range 4000-4999); with HTTP 401 `unauthorized` it stops reconnecting until the user pairs again |
+| Device token storage | Keychain, after first unlock, this device only | fixed | a Passport press in the background must reach the channel; the token never syncs to other devices |
 | PDU header | 4 bytes | fixed | `docs/ble-protocol.md` §6 |
 | Fragment payload | ATT value − 4 | derived at runtime | phone: `maximumWriteValueLength(.withoutResponse)`; 512-byte updates measured on an iPhone XS Max |
 | `maxMessageBytes` | 4096 | fixed (`docs/ble-protocol.md` §6) | the Passport keeps one reply; its measured minimum free heap is 26.9 KB, so 4 KiB is ~15 %. ≈1,300 CJK chars. Largest device message is one Opus packet (RFC 6716 max 1,275 B) + 4 |
@@ -41,6 +43,7 @@ probes on an iPhone XS Max and the Passport during development.
 | tsnet hostname | `duoduo-pocket` | fixed | node name shown in the tailnet admin console |
 | tsnet status timeout | 2 s | fixed (Go), **no data** | an in-process local-API call; bounds a status read for the UI only |
 | `ChannelSettings.defaultPort` / HTTPS default | 443 / on | default setting | `tailscale serve` publishes HTTPS on 443 |
+| Session drawer width | 82 % of the screen, at most 340 pt | display | the room behind stays visible as the way back |
 | `TryChannel.stepDelay` | 0.9 s | display, **no data** | try-it mode only: spaces the scripted thinking and tool frames so the steps can be read; a real turn's timing comes from the brain |
 | Image viewer max zoom | image pixels ÷ fitted screen pixels (≥ 1) | derived | one image pixel per screen pixel; further zoom shows no more detail |
 | Quote length | none | — | `<user-quote>` carries the whole quoted message; the bubble draws three lines of it |

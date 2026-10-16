@@ -54,13 +54,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Taking a photo to send in the chat uses the camera."
+            "value": "Taking a photo to send in the chat and scanning a pairing QR code use the camera."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "在对话中拍照上传需要使用相机。"
+            "value": "在对话中拍照上传和扫描配对二维码需要使用相机。"
           }
         }
       }

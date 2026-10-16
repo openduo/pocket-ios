@@ -98,6 +98,7 @@ final class PocketEngine: @unchecked Sendable {
         link.onDisconnected = { [unowned self] in linkLost() }
         link.onState = { [unowned self] s, d in
             update { $0.link = s; $0.linkDetail = d; $0.deviceName = self.link.peripheralName }
+            PocketSurface.changed()
         }
     }
 
@@ -131,6 +132,9 @@ final class PocketEngine: @unchecked Sendable {
 
     func appBecameActive() {
         queue.async { [self] in
+            // Launched before the first unlock (BLE restoration after a reboot), the token was
+            // not readable when the target was set.
+            if settings.isComplete, !Tailnet.shared.targetSnapshot().hasToken { Tailnet.shared.apply(settings) }
             Tailnet.shared.closeIdle()
             ensureLiveOnQueue("foreground")
             link.retryStaleBond()
@@ -255,7 +259,8 @@ final class PocketEngine: @unchecked Sendable {
                                   expiry: expiry)
         queue.asyncAfter(deadline: .now() + deadline, execute: expiry)
         Task.detached { [self] in
-            let report = await uploader.upload(note, room: room, within: deadline - (CPUClock.uptime() - endWall))
+            let report = await uploader.upload(note, room: room, within: deadline - (CPUClock.uptime() - endWall),
+                                               surface: PocketSurface.current())
             queue.async { [self] in
                 let doneWall = CPUClock.uptime(), doneCPU = CPUClock.processSeconds()
                 // One line per upload, with its CPU share (background CPU budget).
@@ -440,6 +445,8 @@ final class PocketEngine: @unchecked Sendable {
 
     /// One `/live` text frame, already decoded (called on a Go thread).
     func liveFrame(_ f: [String: Any]) {
+        // The session viewer's frames are UI-only and never touch the room's state.
+        if SessionEvent.isViewerFrame(f) { return SessionViewer.shared.frame(f) }
         queue.async { [self] in handleLive(f) }
     }
 
@@ -534,6 +541,8 @@ final class PocketEngine: @unchecked Sendable {
     /// cursor), then refreshes the room's state.
     private func ensureLiveOnQueue(_ reason: String) {
         guard settings.isComplete else { return }
+        // A rejected token cannot be fixed by redialling; pairing again resets this.
+        guard !DeviceCredentials.shared.unauthorized else { return ConversationStore.shared.connectFailed() }
         guard !liveBusy else { liveRecheck = reason; return }
         liveBusy = true
         let s = settings, tuning = tuning
@@ -553,6 +562,7 @@ final class PocketEngine: @unchecked Sendable {
                 do {
                     try AmbientController.shared.openLive(s, since: since, timeout: tuning.connectTimeout)
                     opened = true
+                    SessionViewer.shared.liveOpened()
                 } catch {
                     failure = "\(error)"
                 }

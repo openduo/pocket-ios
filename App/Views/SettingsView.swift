@@ -29,24 +29,27 @@ struct SettingsView: View {
                     }
                 }
                 Section {
-                    NavigationLink { ConnectionEditor(mode: .settings) } label: {
-                        row("link", Palette.brand, String(localized: "频道主机"), model.settings.host.isEmpty ? String(localized: "未设置") : model.settings.host)
+                    NavigationLink { ConnectionDetail() } label: {
+                        row("link", Palette.brand, String(localized: "频道主机"), model.settings.host.isEmpty ? String(localized: "未配对") : model.settings.host)
                     }
-                    NavigationLink { ConnectionEditor(mode: .settings) } label: {
-                        row("number", Palette.brand, String(localized: "房间"), model.settings.room, caption: roomCaption)
+                    NavigationLink { ConnectionDetail() } label: {
+                        row("number", Palette.brand, String(localized: "房间"), model.settings.roomTitle, caption: roomCaption)
                     }
                     NavigationLink { TailscaleDetail() } label: {
                         row("shield.lefthalf.filled", Palette.ok, "Tailscale", tailnetText, stacked: true)
                     }
                 } header: { Text(String(localized: "连接")) } footer: {
-                    Text(String(localized: "端口和 HTTPS 在「频道主机」里。多多随身只走你的 Tailscale 网络。"))
+                    Text(String(localized: "主机和房间来自配对；换房间或换主机需要重新配对。多多随身只走你的 Tailscale 网络。"))
                 }
                 Section {
                     row("speaker.wave.2", Palette.attention, String(localized: "环境模式的声音"), model.ambient.isOn ? model.ambient.route : String(localized: "扬声器"))
                     Toggle(isOn: $speakReplies) { label("speaker.wave.2.bubble", Palette.secondary, String(localized: "播放语音回复")) }
                         .onChange(of: speakReplies) { _, _ in AmbientController.shared.audioWantChanged("setting") }
                     Toggle(isOn: $keepAwake) { label("sun.max", Palette.secondary, String(localized: "保持屏幕常亮")) }
-                        .onChange(of: keepAwake) { _, on in UIApplication.shared.isIdleTimerDisabled = on }
+                        .onChange(of: keepAwake) { _, on in
+                            UIApplication.shared.isIdleTimerDisabled = on
+                            PocketSurface.changed()
+                        }
                     Toggle(isOn: $keepListening) { label("lock.iphone", Palette.secondary, String(localized: "离开 App 后继续听")) }
                     Toggle(isOn: $haptics) { label("hand.tap", Palette.secondary, String(localized: "按住说话的触感反馈")) }
                     Picker(selection: $headsetMic) {
@@ -138,11 +141,10 @@ struct SettingsView: View {
         }
     }
 
-    /// The channel's display name for the room, when it differs from the ID. It is user data and
-    /// is shown as entered, in any UI language.
+    /// The room's ID under its display name, when they differ. It is user data and is shown as
+    /// entered, in any UI language.
     private var roomCaption: String? {
-        guard let name = model.chat.room?.roomName, !name.isEmpty, name != model.settings.room else { return nil }
-        return name
+        model.settings.roomTitle == model.settings.room ? nil : model.settings.room
     }
 
     private func row(_ icon: String, _ color: Color, _ title: String, _ value: String, stacked: Bool = false,
@@ -216,192 +218,39 @@ struct TailscaleDetail: View {
     }
 }
 
-/// Host, room, port and HTTPS with the live check (onboarding step 2 and Settings).
-struct ConnectionEditor: View {
-    enum Mode { case settings, onboarding }
-    let mode: Mode
-    var onDone: (() -> Void)?
+/// The paired connection, read-only: host, port, room, device. Changing any of it is pairing
+/// again.
+struct ConnectionDetail: View {
     @EnvironmentObject var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-    @State private var draft = ChannelSettings.load()
-    @StateObject private var check = ConnectionCheck()
-    @State private var advanced = false
+    @State private var pairing = false
 
     var body: some View {
+        let s = model.settings
         List {
-            if mode == .onboarding {
-                Section {
-                    VStack(spacing: 6) {
-                        Text(String(localized: "找到多多")).font(.title.weight(.bold))
-                        Text(String(localized: "填写频道所在的主机和这台手机专用的房间。"))
-                            .font(.subheadline).foregroundStyle(Palette.secondary).multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .listRowBackground(Color.clear)
-                }
-            }
             Section {
-                LabeledContent(String(localized: "主机")) {
-                    TextField("your-host.tailnet.ts.net", text: $draft.host)
-                        .multilineTextAlignment(.trailing)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
-                }
-                LabeledContent(String(localized: "房间")) {
-                    TextField(String(localized: "房间名"), text: $draft.room)
-                        .multilineTextAlignment(.trailing)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                }
-                DisclosureGroup(isExpanded: $advanced) {
-                    Toggle("HTTPS", isOn: $draft.tls)
-                    LabeledContent(String(localized: "端口")) {
-                        TextField("443", value: $draft.port, format: .number.grouping(.never))
-                            .multilineTextAlignment(.trailing).keyboardType(.numberPad)
-                    }
-                } label: {
-                    Text(String(localized: "端口 · HTTPS")).foregroundStyle(Palette.secondary)
-                        .badge(Text("\(draft.port) · \(draft.tls ? String(localized: "开") : String(localized: "关"))"))
-                }
+                LabeledContent(String(localized: "主机"), value: s.host.isEmpty ? String(localized: "未配对") : s.host)
+                LabeledContent(String(localized: "端口 · HTTPS"),
+                               value: "\(s.port) · \(s.tls ? String(localized: "开") : String(localized: "关"))")
+                LabeledContent(String(localized: "房间"), value: s.roomTitle)
+                LabeledContent(String(localized: "会话查看"),
+                               value: s.scope == .sessions ? String(localized: "可以") : String(localized: "不可以"))
             } footer: {
-                Text(String(localized: "频道通过 tailnet 访问，例如用 tailscale serve 发布的主机名，默认 HTTPS 443。"))
+                if model.needsPairing {
+                    Text(String(localized: "多多不再接受这台手机的配对，需要重新配对。")).foregroundStyle(Palette.attention)
+                }
             }
             Section {
-                ForEach(check.items) { item in
-                    HStack(spacing: 8) {
-                        switch item.state {
-                        case .pending: Image(systemName: "circle.dotted").foregroundStyle(Palette.placeholder)
-                        case .running: ProgressView().controlSize(.small)
-                        case .ok: Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.ok)
-                        case .failed: Image(systemName: "xmark.circle.fill").foregroundStyle(Palette.attention)
-                        }
-                        Text(item.text).font(.subheadline)
-                    }
-                    .accessibilityElement(children: .combine)
-                }
-                if !check.rooms.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(String(localized: "这个频道有这些房间：")).font(.caption).foregroundStyle(Palette.secondary)
-                        HStack {
-                            ForEach(check.rooms, id: \.self) { r in
-                                Button(r) { draft.room = r; runCheck() }.buttonStyle(.bordered).controlSize(.small)
-                                    .disabled(check.running)
-                            }
-                        }
-                    }
-                }
-                Button(String(localized: "检查连接")) { runCheck() }.disabled(!draft.isComplete || check.running)
-            }
-            Section {
-                Button(mode == .onboarding ? String(localized: "继续") : String(localized: "保存")) { save() }
-                    .buttonStyle(PrimaryButtonStyle())
-                    .disabled(!draft.isComplete || draft.port <= 0 || draft.port > 65535 || (mode == .onboarding && !check.passed))
-                    .listRowBackground(Color.clear)
-                if mode == .onboarding {
-                    Button(String(localized: "稍后再说")) { save() }
-                        .frame(maxWidth: .infinity)
-                        .disabled(!draft.isComplete)
-                        .listRowBackground(Color.clear)
-                }
+                Button(String(localized: "重新配对")) { pairing = true }
+                    .disabled(model.trying)
+            } footer: {
+                Text(String(localized: "用新的配对链接重新配对。旧的配对由多多那边撤销。"))
             }
         }
         .scrollContentBackground(.hidden)
         .background(Palette.grouped.ignoresSafeArea())
-        .navigationTitle(mode == .settings ? String(localized: "频道") : "")
+        .navigationTitle(String(localized: "频道"))
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            #if DEBUG
-            if Demo.active { check.showDemoPass(); return }
-            #endif
-            if draft.isComplete { runCheck() }
-        }
-        .onDisappear {
-            // A check points the bridge at the draft; leaving without saving points it back.
-            if !saved { Tailnet.shared.apply(ChannelSettings.load()) }
-        }
-    }
-
-    @State private var saved = false
-
-    private func runCheck() { check.run(draft) }
-
-    private func save() {
-        saved = true
-        model.save(draft)
-        if let onDone { onDone() } else { dismiss() }
-    }
-}
-
-/// The live checklist: Tailscale → `/healthz` → `/api/state` (design §4.1 step 2).
-@MainActor
-final class ConnectionCheck: ObservableObject {
-    struct Item: Identifiable {
-        enum State { case pending, running, ok, failed }
-        let id: Int
-        var text: String
-        var state: State
-    }
-
-    @Published var items: [Item] = [
-        .init(id: 0, text: "Tailscale", state: .pending),
-        .init(id: 1, text: String(localized: "频道"), state: .pending),
-        .init(id: 2, text: String(localized: "房间"), state: .pending),
-    ]
-    @Published var rooms: [String] = []
-    @Published var running = false
-    var passed: Bool { items.allSatisfy { $0.state == .ok } }
-    /// Only the latest run writes results; an earlier one still in flight is ignored.
-    private var generation = 0
-
-    func run(_ s: ChannelSettings) {
-        generation += 1
-        let gen = generation
-        running = true
-        rooms = []
-        items = [.init(id: 0, text: "Tailscale", state: .running),
-                 .init(id: 1, text: String(localized: "频道"), state: .pending),
-                 .init(id: 2, text: String(localized: "房间「\(s.room)」"), state: .pending)]
-        Tailnet.shared.apply(s)
-        let tuning = PocketTuning.load()
-        Task {
-            let up: Bool = await Task.detached { (try? Tailnet.shared.up(timeout: tuning.connectTimeout)) != nil }.value
-            guard gen == generation else { return }
-            items[0] = .init(id: 0, text: up ? String(localized: "Tailscale 已连接") : String(localized: "Tailscale 没有连上"), state: up ? .ok : .failed)
-            guard up else { running = false; return }
-            items[1].state = .running
-            let client = ChannelClient(settings: s, tuning: tuning)
-            do {
-                let ms = try await client.health()
-                guard gen == generation else { return }
-                items[1] = .init(id: 1, text: String(localized: "频道可达 · \(ms) ms"), state: .ok)
-            } catch {
-                guard gen == generation else { return }
-                items[1] = .init(id: 1, text: String(localized: "频道不可达：\(String(describing: error))"), state: .failed)
-                running = false
-                return
-            }
-            items[2].state = .running
-            do {
-                let result = try await client.state()
-                guard gen == generation else { return }
-                switch result {
-                case .ok(let st):
-                    var t = String(localized: "房间「\(st.roomName)」存在")
-                    if st.daemonOK == true { t += String(localized: "，多多在线") } else if st.daemonOK == false { t += String(localized: "，多多暂时无法回复") }
-                    if st.cerebellumMismatch {
-                        t += String(localized: "；小脑与 channel 版本不一致，需要两端同时升级")
-                    } else if st.cerebellumOK == false {
-                        t += String(localized: "；语音服务不可用")
-                    }
-                    items[2] = .init(id: 2, text: t, state: .ok)
-                case .unknownRoom(let c):
-                    rooms = c.rooms
-                    items[2] = .init(id: 2, text: String(localized: "没有房间「\(s.room)」"), state: .failed)
-                }
-            } catch {
-                guard gen == generation else { return }
-                items[2] = .init(id: 2, text: String(localized: "房间检查失败：\(String(describing: error))"), state: .failed)
-            }
-            running = false
-        }
+        .sheet(isPresented: $pairing) { PairingSheet(request: PairRequest()) }
     }
 }
 

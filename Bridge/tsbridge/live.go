@@ -5,7 +5,9 @@ package tsbridge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -45,26 +47,50 @@ func SetLiveHandler(h LiveHandler) {
 	liveMu.Unlock()
 }
 
-// LiveOpen dials the `/live` socket at path (for example
-// "/live?room=x&since=1"). An existing socket is dropped first, without a
+// ErrLiveUnauthorized is the prefix of LiveOpen's error when the channel
+// answers the upgrade with 401: the device token is missing or revoked, and
+// redialling cannot help.
+const ErrLiveUnauthorized = "tsbridge: live unauthorized"
+
+// LiveOpen dials the `/live` socket at path (for example "/live?since=1").
+// headersJSON is a JSON object of header name to value sent with the upgrade
+// request; the target's device token is added unless it names its own
+// Authorization. An existing socket is dropped first, without a
 // close report.
-func LiveOpen(path string, timeoutMs int64) error {
+func LiveOpen(path, headersJSON string, timeoutMs int64) error {
 	mu.Lock()
 	c := client
 	mu.Unlock()
 	if c == nil {
 		return errors.New("tsbridge: not started")
 	}
-	base := BaseURL()
-	if base == "" {
+	t := currentTarget()
+	if t.Host == "" {
 		return errors.New("tsbridge: no target host")
 	}
-	url := "ws" + strings.TrimPrefix(base, "http") + path
+	url := "ws" + strings.TrimPrefix(t.origin(), "http") + path
+	header := http.Header{}
+	if headersJSON != "" {
+		var h map[string]string
+		if err := json.Unmarshal([]byte(headersJSON), &h); err != nil {
+			return fmt.Errorf("tsbridge: headers: %w", err)
+		}
+		for k, v := range h {
+			header.Set(k, v)
+		}
+	}
+	t.authorize(header)
 	gen := liveDrop()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
 	defer cancel()
-	conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPClient: &http.Client{Transport: c.Transport}})
+	conn, res, err := websocket.Dial(ctx, url, &websocket.DialOptions{
+		HTTPClient: &http.Client{Transport: c.Transport},
+		HTTPHeader: header,
+	})
 	if err != nil {
+		if res != nil && res.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("%s: %w", ErrLiveUnauthorized, err)
+		}
 		return err
 	}
 	// Channel frames carry whole answers; the library default read limit is

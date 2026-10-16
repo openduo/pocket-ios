@@ -24,6 +24,13 @@ struct DraftChip: Identifiable, Equatable {
     static func == (a: DraftChip, b: DraftChip) -> Bool { a.id == b.id && a.state == b.state }
 }
 
+/// The pairing sheet's request.
+struct PairRequest: Identifiable, Equatable {
+    let id = UUID()
+    /// The link that opened it; nil when the user scans or pastes one.
+    var link: PairingLink?
+}
+
 /// UI state on the main actor. Engines publish snapshots here only while the app is active:
 /// SwiftUI work in the background got the app killed for CPU (measured on the iPhone XS Max).
 @MainActor
@@ -66,6 +73,10 @@ final class AppModel: ObservableObject {
     @Published var trying = false
     /// Ticks once a second while visible, for time-based display (the ambient view's clock).
     @Published var now = Date()
+    /// The channel rejected the device token: the app needs pairing again.
+    @Published var needsPairing = DeviceCredentials.shared.unauthorized
+    /// The pairing sheet, with the link it was opened with (nil: scan or paste one).
+    @Published var pairSheet: PairRequest?
 
     private var timer: Timer?
     private var active = false
@@ -81,6 +92,9 @@ final class AppModel: ObservableObject {
             return
         }
         #endif
+        DeviceCredentials.shared.onChange = { [weak self] in
+            Task { @MainActor in self?.needsPairing = DeviceCredentials.shared.unauthorized }
+        }
         ConversationStore.shared.onChange = { [weak self] in
             Task { @MainActor in self?.chat = ConversationStore.shared.snapshot() }
         }
@@ -114,6 +128,7 @@ final class AppModel: ObservableObject {
         active = a
         timer?.invalidate()
         timer = nil
+        SessionViewer.shared.setActive(a)
         guard a else { return }
         #if DEBUG
         if Demo.active { return }
@@ -146,10 +161,42 @@ final class AppModel: ObservableObject {
         if roomChanged, ambient.isOn { AmbientController.shared.turnOff() }
     }
 
+    // MARK: pairing
+
+    /// The session viewer is offered: the device has the `sessions` or `notify` scope and is not
+    /// rejected.
+    var sessionsEnabled: Bool { settings.scope.views && settings.isComplete && !needsPairing }
+    /// The device may send notifications to the sessions that accept them.
+    var notifyEnabled: Bool { sessionsEnabled && settings.scope == .notify }
+
+    /// A URL of the app's scheme: `pair` opens pairing, everything else is the share inbox.
+    func open(_ url: URL) {
+        guard url.scheme?.lowercased() == ShareInbox.scheme else { return }
+        guard PairingLink.isPairURL(url) else { return importShares() }
+        guard let link = PairingLink.parse(url.absoluteString) else {
+            toast = String(localized: "配对链接不完整，请重新获取")
+            return
+        }
+        pairSheet = PairRequest(link: link)
+    }
+
+    /// The channel accepted the code: store the device and its token, then reconnect to the
+    /// paired room. The bridge gets the new host and token together before anything is sent.
+    func paired(_ d: PairedDevice, link: PairingLink) {
+        let s = ChannelSettings(host: link.host, port: link.port, tls: link.tls, room: d.room, roomName: d.roomName,
+                                deviceID: d.deviceID, scope: d.scope)
+        DeviceCredentials.shared.store(d.token)
+        Tailnet.shared.endPairing(s, token: d.token)
+        SessionViewer.shared.reset()
+        AppLog.shared.log("paired", ["scope": d.scope.rawValue])
+        save(s)
+    }
+
     // MARK: try-it mode
 
     func startTrying() {
         if ambient.isOn { AmbientController.shared.turnOff() }
+        SessionViewer.shared.reset()
         TryMode.enter()
         trying = true
         settings = ChannelSettings.load()
@@ -162,6 +209,7 @@ final class AppModel: ObservableObject {
     /// onboarding when there is none.
     func stopTrying() {
         if ambient.isOn { AmbientController.shared.turnOff() }
+        SessionViewer.shared.reset()
         quote = nil
         draftText = ""
         chips = []
@@ -199,6 +247,7 @@ final class AppModel: ObservableObject {
     /// Nav subtitle, and the pose for the empty state and the ambient view (design §2 table).
     var presence: (pose: Pose, subtitle: String, live: Bool) {
         if !settings.isComplete { return (.offline, String(localized: "还没有设置"), false) }
+        if needsPairing, !trying { return (.offline, String(localized: "需要重新配对"), false) }
         if chat.connection == .offline { return (.offline, String(localized: "连不上 · 正在重试"), false) }
         if holding { return (.heard, String(localized: "在听你说"), true) }
         if let w = chat.working {

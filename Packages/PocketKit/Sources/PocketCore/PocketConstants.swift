@@ -14,8 +14,9 @@ public enum PocketConstants {
 
     /// The channel's client-API major this app speaks: the channel announces its own in
     /// `ready.api`, and a lower or absent value means the channel must be upgraded. It is raised
-    /// only by an incompatible change to the channel's HTTP or `/live` contract.
-    public static let clientAPIMajor = 1
+    /// only by an incompatible change to the channel's HTTP or `/live` contract. Major 2: every
+    /// data route needs a device token (`/api/pair`), and the token names the room.
+    public static let clientAPIMajor = 2
 
     /// Primary service and characteristics (ble-protocol §4: one service, TX notify, RX write
     /// without response). The firmware uses the same values.

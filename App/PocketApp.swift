@@ -43,8 +43,11 @@ struct PocketApp: App {
                 .environmentObject(model)
                 .preferredColorScheme(model.colorScheme)
                 .tint(Palette.brand)
-                // The share extension opens the app with a share waiting in the inbox.
-                .onOpenURL { url in if url.scheme == ShareInbox.scheme { model.importShares() } }
+                // `duoduopocket://pair?...` pairs; the share extension opens the app with any
+                // other URL of the scheme, with a share waiting in the inbox.
+                .onOpenURL { url in model.open(url) }
+                // This sheet sits outside `RootView`, so it needs the model handed in.
+                .sheet(item: $model.pairSheet) { PairingSheet(request: $0).environmentObject(model) }
         }
         .onChange(of: phase) { _, p in
             let name: String = switch p {

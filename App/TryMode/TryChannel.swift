@@ -264,6 +264,20 @@ final class TryChannel: @unchecked Sendable {
                 }
             case "hush":
                 frame(["type": "stop_audio"])
+            case "sessions_watch":
+                // The session viewer's sample: a fixed list, and a fixed window for the opened one.
+                frame(["type": "sessions", "sessions": TryScript.sessions.map(\.summary)])
+                if let key = f["open"] as? String, let s = TryScript.sessions.first(where: { $0.key == key }) {
+                    frame(["type": "session_rows", "key": key, "rows": s.rows, "initial": true])
+                }
+            case "session_notify":
+                // Delivered at once; the sample session shows it as a notification from this phone.
+                guard let id = f["id"] as? String, let key = f["key"] as? String, let text = f["text"] as? String else { break }
+                frame(["type": "session_notify_result", "id": id, "ok": true])
+                frame(["type": "session_rows", "key": key, "rows": [
+                    ["id": "n-" + id, "at": ISO8601DateFormatter().string(from: Date()), "kind": "notify", "text": text,
+                     "from_label": TryScript.notifySource],
+                ]])
             default:
                 break
             }

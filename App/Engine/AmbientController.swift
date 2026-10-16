@@ -31,6 +31,8 @@ struct AmbientSnapshot: Equatable {
     var route = ""
     var pressMuted = false
     var thermalWarning = false
+    /// The audio session is interrupted, whatever `phase` shows (a failure outranks it there).
+    var interrupted = false
 
     var isOn: Bool { phase != .off }
 }
@@ -80,6 +82,8 @@ final class AmbientController: @unchecked Sendable {
     private var tuning = PocketTuning.load()
 
     private var on = false
+    /// The surface last reported on the open `/live` connection; nil after it is replaced.
+    private var surfaceSent: Surface?
     /// 静音 for this ambient session; a new session starts audible.
     private var silent = false
     private var interrupted = false
@@ -252,6 +256,7 @@ final class AmbientController: @unchecked Sendable {
     private func liveReplaced() {
         liveConn = nil
         liveAudio = nil
+        surfaceSent = nil
         perform(edge.socketClosed())
     }
 
@@ -267,6 +272,25 @@ final class AmbientController: @unchecked Sendable {
             return wantsAudio
         }
         try live.open(path: ChannelPaths.live(room: s.room, since: since, audio: audio), timeout: timeout)
+        // A new connection starts unreported, whatever reached the old one meanwhile.
+        queue.async { [self] in
+            surfaceSent = nil
+            reportSurfaceOnQueue()
+        }
+    }
+
+    /// Sends the app's surface on the open connection when it differs from the last one sent.
+    func reportSurface() {
+        queue.async { [self] in reportSurfaceOnQueue() }
+    }
+
+    private func reportSurfaceOnQueue() {
+        guard live.isOpen else { return }
+        let s = PocketSurface.current()
+        guard s != surfaceSent else { return }
+        surfaceSent = s
+        live.send(json: s.frame)
+        AppLog.shared.log("surface_send", ["display": s.display.rawValue, "spoken": s.spoken])
     }
 
     /// The `audio` switch a connection opened now asks for: always while ambient mode runs (it is
@@ -287,6 +311,7 @@ final class AmbientController: @unchecked Sendable {
     func audioWantChanged(_ reason: String) {
         queue.async { [self] in
             if !on, AppPhase.value == "background" { stopRead() }
+            reportSurfaceOnQueue()
             guard liveAudio != nil, liveAudio != wantsAudio else { return }
             AppLog.shared.log("live_audio_change", ["reason": reason, "audio": wantsAudio])
             PocketEngine.shared.liveAudioChanged(reason)
@@ -592,6 +617,7 @@ final class AmbientController: @unchecked Sendable {
         s.aec = edge.aec
         s.route = on ? VoiceIO.routeName : ""
         s.pressMuted = edge.pressCount > 0
+        s.interrupted = interrupted
         // `.serious` is the level at which Apple asks apps to reduce work.
         s.thermalWarning = ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue
         snapLock.lock()
@@ -599,6 +625,7 @@ final class AmbientController: @unchecked Sendable {
         snap = s
         snapLock.unlock()
         guard changed else { return }
+        reportSurfaceOnQueue()
         // Background rule: no UI work while not active; the view reads the snapshot on return.
         guard AppPhase.isActive, !publishPending else { return }
         publishPending = true
