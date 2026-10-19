@@ -41,8 +41,8 @@ func Stream(id int64, method, path, headersJSON string, body []byte, h StreamHan
 	if c == nil {
 		return nil, errors.New("tsbridge: not started")
 	}
-	base := BaseURL()
-	if base == "" {
+	t := currentTarget()
+	if t.Host == "" {
 		return nil, errors.New("tsbridge: no target host")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -60,7 +60,7 @@ func Stream(id int64, method, path, headersJSON string, body []byte, h StreamHan
 		streamMu.Unlock()
 		cancel()
 	}()
-	req, err := http.NewRequestWithContext(ctx, method, base+path, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, t.origin()+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -73,6 +73,7 @@ func Stream(id int64, method, path, headersJSON string, body []byte, h StreamHan
 			req.Header.Set(k, v)
 		}
 	}
+	t.authorize(req.Header)
 	req.ContentLength = int64(len(body))
 	res, err := c.Do(req)
 	if err != nil {

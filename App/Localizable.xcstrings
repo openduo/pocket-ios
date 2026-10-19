@@ -83,6 +83,16 @@
         }
       }
     },
+    "%lld 步 · %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld steps · %@"
+          }
+        }
+      }
+    },
     "%lld 秒": {
       "localizations": {
         "en": {
@@ -205,16 +215,6 @@
         }
       }
     },
-    "Tailscale 已连接": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Tailscale connected"
-          }
-        }
-      }
-    },
     "Tailscale 没有连上": {
       "localizations": {
         "en": {
@@ -331,16 +331,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Messages, recordings and files in try-it mode stay on this phone and are all deleted when you exit."
-          }
-        }
-      }
-    },
-    "保存": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save"
           }
         }
       }
@@ -815,16 +805,6 @@
         }
       }
     },
-    "填写频道所在的主机和这台手机专用的房间。": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Enter the channel's host and the room for this iPhone."
-          }
-        }
-      }
-    },
     "声音": {
       "localizations": {
         "en": {
@@ -885,6 +865,16 @@
         }
       }
     },
+    "多多会在那个会话里处理这条通知": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "DuoDuo handles this notification in that session"
+          }
+        }
+      }
+    },
     "多多暂时无法回复": {
       "localizations": {
         "en": {
@@ -901,6 +891,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "DuoDuo is replying: %@"
+          }
+        }
+      }
+    },
+    "多多那边已经没有这个会话了": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "DuoDuo no longer has this session"
           }
         }
       }
@@ -1265,42 +1265,12 @@
         }
       }
     },
-    "房间「%@」存在": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Room “%@” exists"
-          }
-        }
-      }
-    },
-    "房间名": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Room name"
-          }
-        }
-      }
-    },
     "已静音：还在听，回复只显示在屏幕上": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Muted: still listening; replies show on screen only"
-          }
-        }
-      }
-    },
-    "房间检查失败：%@": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Room check failed: %@"
           }
         }
       }
@@ -1657,6 +1627,16 @@
         }
       }
     },
+    "更多 %lld 个": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld more"
+          }
+        }
+      }
+    },
     "更新": {
       "localizations": {
         "en": {
@@ -1723,16 +1703,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Unknown"
-          }
-        }
-      }
-    },
-    "未设置": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Not set"
           }
         }
       }
@@ -1823,16 +1793,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Check the numbers match"
-          }
-        }
-      }
-    },
-    "检查连接": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Check Connection"
           }
         }
       }
@@ -1987,22 +1947,22 @@
         }
       }
     },
-    "没有房间「%@」": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No room “%@”"
-          }
-        }
-      }
-    },
     "没有蓝牙权限": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "No Bluetooth access"
+          }
+        }
+      }
+    },
+    "没有送到，请稍后再试": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not delivered; try again later"
           }
         }
       }
@@ -2317,16 +2277,6 @@
         }
       }
     },
-    "稍后再说": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Later"
-          }
-        }
-      }
-    },
     "端口": {
       "localizations": {
         "en": {
@@ -2343,16 +2293,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Port · HTTPS"
-          }
-        }
-      }
-    },
-    "端口和 HTTPS 在「频道主机」里。多多随身只走你的 Tailscale 网络。": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Port and HTTPS are under Channel Host. DuoDuo Pocket only uses your Tailscale network."
           }
         }
       }
@@ -2393,6 +2333,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Waiting for a connection"
+          }
+        }
+      }
+    },
+    "给 %@ 发通知（%@）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notify %1$@ (%2$@)"
+          }
+        }
+      }
+    },
+    "给 %@ 发通知": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notify %@"
           }
         }
       }
@@ -2617,12 +2577,12 @@
         }
       }
     },
-    "这个频道有这些房间：": {
+    "这台设备没有发通知的权限，需要重新配对": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Rooms on this channel:"
+            "value": "This device may not send notifications; pair it again"
           }
         }
       }
@@ -2733,6 +2693,36 @@
           "stringUnit": {
             "state": "translated",
             "value": "Log Out"
+          }
+        }
+      }
+    },
+    "通知": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification"
+          }
+        }
+      }
+    },
+    "通知 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notify %@"
+          }
+        }
+      }
+    },
+    "通知 · 来自「%@」": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification · from “%@”"
           }
         }
       }
@@ -2907,32 +2897,12 @@
         }
       }
     },
-    "频道不可达：%@": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Channel unreachable: %@"
-          }
-        }
-      }
-    },
     "频道主机": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Channel Host"
-          }
-        }
-      }
-    },
-    "频道可达 · %lld ms": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Channel reachable · %lld ms"
           }
         }
       }
@@ -2957,22 +2927,22 @@
         }
       }
     },
-    "频道通过 tailnet 访问，例如用 tailscale serve 发布的主机名，默认 HTTPS 443。": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The channel is reached over your tailnet, for example the host name published with tailscale serve. Default HTTPS 443."
-          }
-        }
-      }
-    },
     "频道配置提示（%lld）": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Channel config notes (%lld)"
+          }
+        }
+      }
+    },
+    "飞书": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Feishu"
           }
         }
       }
@@ -3049,42 +3019,498 @@
         }
       }
     },
-    "，多多在线": {
+    "Tailscale 没有连上。先登录 Tailscale，再重新配对。": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": ", DuoDuo is online"
+            "value": "Tailscale isn't connected. Sign in to Tailscale, then pair again."
           }
         }
       }
     },
-    "，多多暂时无法回复": {
+    "不可以": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": ", DuoDuo can't reply right now"
+            "value": "No"
           }
         }
       }
     },
-    "；小脑与 channel 版本不一致，需要两端同时升级": {
+    "不能使用相机": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "; the cerebellum and the channel run different versions, upgrade both together"
+            "value": "Can't use the camera"
           }
         }
       }
     },
-    "；语音服务不可用": {
+    "主机和房间来自配对；换房间或换主机需要重新配对。多多随身只走你的 Tailscale 网络。": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "; voice service unavailable"
+            "value": "The host and room come from pairing; changing either means pairing again. DuoDuo Pocket only uses your Tailscale network."
+          }
+        }
+      }
+    },
+    "任务": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jobs"
+          }
+        }
+      }
+    },
+    "会话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chats"
+          }
+        }
+      }
+    },
+    "会话列表": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sessions"
+          }
+        }
+      }
+    },
+    "会话查看": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Session viewer"
+          }
+        }
+      }
+    },
+    "关闭会话列表": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close sessions"
+          }
+        }
+      }
+    },
+    "取消": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel"
+          }
+        }
+      }
+    },
+    "只和你自己的多多配对。配对后这台手机只能进入多多为它绑定的房间。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only pair with your own DuoDuo. Once paired, this phone can only enter the room DuoDuo bound it to."
+          }
+        }
+      }
+    },
+    "只读": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Read-only"
+          }
+        }
+      }
+    },
+    "只读 · 正在运行": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Read-only · running"
+          }
+        }
+      }
+    },
+    "可以": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yes"
+          }
+        }
+      }
+    },
+    "回到房间": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Back to the room"
+          }
+        }
+      }
+    },
+    "在系统设置里允许多多使用相机，或改用粘贴链接。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow camera access for DuoDuo in Settings, or paste the link instead."
+          }
+        }
+      }
+    },
+    "多多不再接受这台手机的配对，需要重新配对。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "DuoDuo no longer accepts this phone. Pair it again."
+          }
+        }
+      }
+    },
+    "多多不再接受这台手机，请让多多生成新的配对链接": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "DuoDuo no longer accepts this phone. Ask DuoDuo for a new pairing link"
+          }
+        }
+      }
+    },
+    "对准配对二维码": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Point at the pairing QR code"
+          }
+        }
+      }
+    },
+    "工具出错：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tool failed: %@"
+          }
+        }
+      }
+    },
+    "已配对 · 房间「%@」": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paired · room “%@”"
+          }
+        }
+      }
+    },
+    "或在这里粘贴链接": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Or paste the link here"
+          }
+        }
+      }
+    },
+    "扫描二维码": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan QR code"
+          }
+        }
+      }
+    },
+    "换一个链接": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use another link"
+          }
+        }
+      }
+    },
+    "暂时读不到多多的会话，正在重试": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can't read DuoDuo's sessions right now; retrying"
+          }
+        }
+      }
+    },
+    "最近没有活动": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No recent activity"
+          }
+        }
+      }
+    },
+    "来自「%@」": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "From “%@”"
+          }
+        }
+      }
+    },
+    "正在运行": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Running"
+          }
+        }
+      }
+    },
+    "正在配对…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pairing…"
+          }
+        }
+      }
+    },
+    "此处有未显示的事件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some events are not shown here"
+          }
+        }
+      }
+    },
+    "没有其他会话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No other sessions"
+          }
+        }
+      }
+    },
+    "没有找到配对链接": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No pairing link found"
+          }
+        }
+      }
+    },
+    "用新的配对链接重新配对。旧的配对由多多那边撤销。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pair again with a new pairing link. The old pairing is revoked on DuoDuo’s side."
+          }
+        }
+      }
+    },
+    "粘贴配对链接": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paste pairing link"
+          }
+        }
+      }
+    },
+    "要告诉它什么": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What should it know"
+          }
+        }
+      }
+    },
+    "让多多生成一个配对链接，然后在这台手机上打开链接，或扫描它的二维码。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ask DuoDuo for a pairing link, then open it on this phone or scan its QR code."
+          }
+        }
+      }
+    },
+    "这个会话不接收通知": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This session does not take notifications"
+          }
+        }
+      }
+    },
+    "这个配对链接已失效（过期、已用过或不存在）。请让多多重新生成一个配对链接。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This pairing link no longer works (expired, already used or unknown). Ask DuoDuo for a new one."
+          }
+        }
+      }
+    },
+    "这台手机没有查看会话的权限": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This phone isn't allowed to view sessions"
+          }
+        }
+      }
+    },
+    "这台手机的房间": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This phone's room"
+          }
+        }
+      }
+    },
+    "连不上 %@：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can't reach %1$@: %2$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连不上 %1$@：%2$@"
+          }
+        }
+      }
+    },
+    "配对": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pair"
+          }
+        }
+      }
+    },
+    "配对失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pairing failed: %@"
+          }
+        }
+      }
+    },
+    "配对这台手机": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pair this phone"
+          }
+        }
+      }
+    },
+    "配对链接不完整，请重新获取": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The pairing link is incomplete; get a new one"
+          }
+        }
+      }
+    },
+    "配对链接以 duoduopocket://pair 开头，只能用一次，过期后需要重新生成。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A pairing link starts with duoduopocket://pair, works once, and must be generated again after it expires."
+          }
+        }
+      }
+    },
+    "需要重新配对": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pair again"
+          }
+        }
+      }
+    },
+    "家里的 ambient 需要升级后才能配对。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your ambient at home needs an upgrade before this phone can pair. "
+          }
+        }
+      }
+    },
+    "这一版需要先配对设备。让多多生成配对链接后，这台手机会回到原来的房间。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This version needs the phone to be paired first. Ask DuoDuo for a pairing link; the phone then returns to its room."
           }
         }
       }

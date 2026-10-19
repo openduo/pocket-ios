@@ -416,6 +416,10 @@ final class ConversationStore: @unchecked Sendable {
                 } catch let e as ChannelError where e.isTransport {
                     result = .queued
                     transportDown = true
+                } catch ChannelError.http(401, _) where DeviceCredentials.shared.unauthorized {
+                    // Not the message's fault: it goes out once the device is paired again.
+                    result = .queued
+                    transportDown = true
                 } catch ChannelError.http(let status, let error) {
                     AppLog.shared.log("message_error", ["err": "\(status) \(error)"])
                     notice = UpgradeNotice.of(status: status, error: error)
@@ -434,7 +438,7 @@ final class ConversationStore: @unchecked Sendable {
                     break
                 }
                 let uploader = VoiceUploader(transport: TsnetTransport(tuning: tuning), tuning: tuning)
-                let r = await uploader.upload(note, room: room)
+                let r = await uploader.upload(note, room: room, surface: PocketSurface.current())
                 notice = r.upgrade
                 AppLog.shared.log("phone_note", ["message_id": item.messageID, "packets": note.packets.count,
                                                  "accepted": r.outcome.messageID != nil, "attempts": r.attempts,
@@ -443,6 +447,9 @@ final class ConversationStore: @unchecked Sendable {
                 case .accepted(let id):
                     result = .accepted(at: nil, cleaned: nil)
                     duration = (id, ms)
+                case .sendFailed where DeviceCredentials.shared.unauthorized:
+                    result = .queued
+                    transportDown = true
                 case .sendFailed(let why) where why.hasPrefix("503"):
                     result = .failed(reason: String(localized: "语音服务暂不可用 · 轻点重试"))
                 case .sendFailed(let why) where why.hasPrefix("413"):

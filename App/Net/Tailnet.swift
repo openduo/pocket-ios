@@ -46,8 +46,64 @@ final class Tailnet: @unchecked Sendable {
         }
     }
 
-    func apply(_ s: ChannelSettings) {
-        TsbridgeSetTarget(s.host.trimmingCharacters(in: .whitespaces), s.port, s.tls)
+    private let targetLock = NSLock()
+    /// Counts target changes; the current one, and whether it carries the device token.
+    private var targetGeneration = 0
+    private var targetHasToken = false
+    /// A pairing holds the target: other callers' `apply` (settings, foreground) waits for it,
+    /// so the pair request cannot be sent to the stored host.
+    private var pairing = false
+
+    /// Points the bridge at `s` with the device token for it. The bridge sends the token only to
+    /// the target it was set with. Ignored while a pairing holds the target; `endPairing` sets
+    /// the one that follows it.
+    func apply(_ s: ChannelSettings, token: String? = DeviceCredentials.shared.token) {
+        targetLock.lock(); defer { targetLock.unlock() }
+        guard !pairing else { return }
+        setTarget(s, token: token)
+    }
+
+    /// Points the bridge at a pairing link's host, without a token, until `endPairing`.
+    func beginPairing(_ s: ChannelSettings) {
+        targetLock.lock(); defer { targetLock.unlock() }
+        pairing = true
+        setTarget(s, token: nil)
+    }
+
+    /// Ends the pairing with the target that follows it: the paired host and its new token, or
+    /// the stored connection after a failure.
+    func endPairing(_ s: ChannelSettings, token: String?) {
+        targetLock.lock(); defer { targetLock.unlock() }
+        pairing = false
+        setTarget(s, token: token)
+    }
+
+    /// Caller holds `targetLock`.
+    private func setTarget(_ s: ChannelSettings, token: String?) {
+        targetGeneration += 1
+        targetHasToken = !(token ?? "").isEmpty
+        TsbridgeSetTarget(s.host.trimmingCharacters(in: .whitespaces), s.port, s.tls, token ?? "")
+    }
+
+    /// Requests that need the token are not sent without one: an unpaired app (or one whose
+    /// target is held by a pairing) reaches only `/healthz` and `/api/pair`.
+    func checkPaired(_ path: String) throws {
+        guard !TryMode.active, DeviceAuth.needsToken(path: path), !targetSnapshot().hasToken else { return }
+        throw TransportFailure.notConnected("not paired")
+    }
+
+    /// The target a request is about to use.
+    func targetSnapshot() -> (generation: Int, hasToken: Bool) {
+        targetLock.lock(); defer { targetLock.unlock() }
+        return (targetGeneration, targetHasToken)
+    }
+
+    /// The channel rejected the token sent under `target`. Only a rejection of the stored token,
+    /// on the target still set, counts: a request without a token (pairing, a target being
+    /// replaced) says nothing about it.
+    func rejected(under target: (generation: Int, hasToken: Bool), _ source: String) {
+        guard target.hasToken, targetSnapshot().generation == target.generation else { return }
+        DeviceCredentials.shared.reportUnauthorized(source)
     }
 
     func status() -> TailnetStatus {
@@ -84,13 +140,18 @@ final class Tailnet: @unchecked Sendable {
     func request(method: String, path: String, headers: [String: String] = [:], body: Data = Data(),
                  timeout: TimeInterval, upTimeout: TimeInterval) throws -> (status: Int, body: Data) {
         if TryMode.active { return TryChannel.shared.request(method: method, path: path, headers: headers, body: body) }
+        try checkPaired(path)
         try up(timeout: min(timeout, upTimeout))
         let hdr = String(decoding: try JSONSerialization.data(withJSONObject: headers), as: UTF8.self)
+        let target = targetSnapshot()
         var err: NSError?
         let res = TsbridgeDo(method, path, hdr, body, Int64(timeout * 1000), &err)
         if let err { throw TransportFailure.network(err.localizedDescription) }
         guard let res else { throw TransportFailure.network("no response") }
-        return (res.status, res.body ?? Data())
+        let data = res.body ?? Data()
+        // A 401 `unauthorized`: the token is gone, and every caller stops until the user pairs.
+        if DeviceAuth.isUnauthorized(status: res.status, body: data) { rejected(under: target, "http") }
+        return (res.status, data)
     }
 }
 
@@ -106,8 +167,10 @@ extension Tailnet {
             request.onStreamData(data)
             return (status, Data())
         }
+        try checkPaired(path)
         try up(timeout: upTimeout)
         let hdr = String(decoding: try JSONSerialization.data(withJSONObject: headers), as: UTF8.self)
+        let target = targetSnapshot()
         // A request cancelled while tsnet came up is never sent.
         guard request.begin() else { throw TransportFailure.network("cancelled") }
         defer { request.end() }
@@ -115,7 +178,9 @@ extension Tailnet {
         let res = TsbridgeStream(request.id, method, path, hdr, body, request, &err)
         if let err { throw TransportFailure.network(err.localizedDescription) }
         guard let res else { throw TransportFailure.network("no response") }
-        return (res.status, res.body ?? Data())
+        let data = res.body ?? Data()
+        if DeviceAuth.isUnauthorized(status: res.status, body: data) { rejected(under: target, "http") }
+        return (res.status, data)
     }
 }
 
@@ -207,11 +272,23 @@ final class LiveSocket: NSObject, TsbridgeLiveHandlerProtocol, @unchecked Sendab
     /// Dials `path` (`ChannelPaths.live`), replacing any held socket without a close report.
     func open(path: String, timeout: TimeInterval) throws {
         if TryMode.active { return TryChannel.shared.openLive(self, path: path) }
+        try Tailnet.shared.checkPaired(path)
         try Tailnet.shared.up(timeout: timeout)
+        let target = Tailnet.shared.targetSnapshot()
         var err: NSError?
-        TsbridgeLiveOpen(path, Int64(timeout * 1000), &err)
-        if let err { throw TransportFailure.network(err.localizedDescription) }
+        // The bridge adds the target's device token to the upgrade request.
+        TsbridgeLiveOpen(path, "", Int64(timeout * 1000), &err)
+        if let err {
+            if DeviceAuth.isUnauthorizedOpenError(err.localizedDescription) {
+                Tailnet.shared.rejected(under: target, "live_open")
+            }
+            throw TransportFailure.network(err.localizedDescription)
+        }
+        liveTarget.withLock { $0 = target }
     }
+
+    /// The target the held socket was opened under.
+    private let liveTarget = Locked<(generation: Int, hasToken: Bool)>((0, false))
 
     func ping(timeout: TimeInterval) -> Bool {
         if TryMode.active { return TryChannel.shared.liveOpen(self) }
@@ -248,5 +325,23 @@ final class LiveSocket: NSObject, TsbridgeLiveHandlerProtocol, @unchecked Sendab
         guard let data else { return }
         onBinary?(Data([UInt8](data)))
     }
-    func onLiveClosed(_ reason: String?) { onClosed?(reason ?? "") }
+    func onLiveClosed(_ reason: String?) {
+        let r = reason ?? ""
+        // Reported before the close, so the redial it triggers already sees the rejection.
+        if DeviceAuth.isUnauthorizedClose(r) { Tailnet.shared.rejected(under: liveTarget.withLock { $0 }, "live_close") }
+        onClosed?(r)
+    }
+}
+
+/// A value behind a lock.
+final class Locked<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Value
+
+    init(_ value: Value) { self.value = value }
+
+    func withLock<R>(_ f: (inout Value) -> R) -> R {
+        lock.lock(); defer { lock.unlock() }
+        return f(&value)
+    }
 }

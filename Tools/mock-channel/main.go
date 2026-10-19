@@ -15,9 +15,12 @@
 // spoken. POST /api/speech returns the same packets in the voice message framing (422
 // nothing_to_speak for a blank text, 503 cerebellum_unavailable before any voice message).
 //
-//	go run . -listen <tailnet-ip>:38199 [-answer-delay 3s] [-no-answer] [-upload-max 0]
+// Pairing: POST /api/pair accepts any non-empty code and binds the device to -room with a fixed
+// token; the mock checks no tokens and has no session viewer.
 //
-// Then set the app's host to that address, port 38199, HTTPS off.
+//	go run . -listen <tailnet-ip>:38199 [-answer-delay 3s] [-no-answer] [-upload-max 0] [-room mock]
+//
+// Then open duoduopocket://pair?host=<that address>&port=38199&tls=0&code=any on the phone.
 package main
 
 import (
@@ -66,7 +69,19 @@ var (
 
 func main() {
 	listen := flag.String("listen", "127.0.0.1:38199", "address to listen on")
+	room := flag.String("room", "mock", "the room a paired device is bound to")
 	flag.Parse()
+	http.HandleFunc("/api/pair", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Code string `json:"code"`
+		}
+		if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&body) != nil || body.Code == "" {
+			writeJSON(w, 400, map[string]string{"error": "bad_body"})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"device_id": "mock-device", "name": "mock", "room": *room,
+			"room_name": *room, "scope": "room", "token": "mock-token"})
+	})
 	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"ok": true, "mock": true})
 	})
@@ -384,7 +399,7 @@ func live(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	send(c, map[string]any{"type": "ready", "seq": lastSeq, "turn": nil, "messages": []any{}, "api": 1})
+	send(c, map[string]any{"type": "ready", "seq": lastSeq, "turn": nil, "messages": []any{}, "api": 2})
 	sockets[c] = audio == "1"
 	n := len(sockets)
 	mu.Unlock()

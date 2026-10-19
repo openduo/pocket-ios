@@ -31,6 +31,9 @@ enum Palette {
     /// Soft brand wash for rings and the pill.
     static let brandWash = dyn(0xD5E5E3, 0x0F3537)
     static let chip = dyn(0xE6E5DC, 0x232321)
+    /// Notifications to and from other sessions: set apart from the room's teal so a notify bar
+    /// never reads as the room's composer.
+    static let notice = dyn(0x7D5A12, 0xE2BC6A)
 }
 
 extension UIColor {

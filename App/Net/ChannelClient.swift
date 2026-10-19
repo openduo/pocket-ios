@@ -53,17 +53,18 @@ struct ChannelClient: Sendable {
         return Int((CPUClock.uptime() - t0) * 1000)
     }
 
-    enum StateResult {
-        case ok(RoomState)
-        /// The room does not exist; the channel listed its rooms.
-        case unknownRoom(RoomChoices)
+    func state() async throws -> RoomState {
+        let (s, b) = try await call("GET", ChannelPaths.state(room: settings.room))
+        if s == 200, let st = RoomState.decode(b) { return st }
+        throw ChannelError.http(s, Self.errorText(b))
     }
 
-    func state() async throws -> StateResult {
-        let (s, b) = try await call("GET", ChannelPaths.state(room: settings.room))
-        if s == 200, let st = RoomState.decode(b) { return .ok(st) }
-        if s == 400, let c = RoomChoices.decode(b) { return .unknownRoom(c) }
-        throw ChannelError.http(s, Self.errorText(b))
+    /// `POST /api/pair` with the link's code, against the bridge's current target (the caller
+    /// points it at the link's host first).
+    func pair(_ link: PairingLink) async throws -> PairOutcome {
+        let (s, b) = try await call("POST", PairOutcome.path, headers: ["Content-Type": "application/json"],
+                                    body: link.requestBody)
+        return PairOutcome.of(status: s, body: b)
     }
 
     func imlog(date: String) async throws -> [ImlogEntry] {
@@ -77,7 +78,7 @@ struct ChannelClient: Sendable {
     /// gets the first receipt, so a text whose response was lost is not taken twice.
     func sendMessage(text: String, attachments: [ChannelAttachment], key: String) async throws -> MessageReceipt {
         let (s, b) = try await call("POST", ChannelPaths.messages(room: settings.room),
-                                    headers: ChannelPaths.typedMessageHeaders(key: key),
+                                    headers: ChannelPaths.typedMessageHeaders(key: key, surface: PocketSurface.current()),
                                     body: ChannelPaths.typedMessageBody(text: text, attachments: attachments))
         guard s == 202 else { throw ChannelError.http(s, Self.errorText(b)) }
         return MessageReceipt.decode(b) ?? MessageReceipt(messageID: key, at: nil)

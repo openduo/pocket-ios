@@ -20,8 +20,9 @@ final class UpgradeNoticeTests: XCTestCase {
             guard case .ready(let r) = LiveEvent.decode(f) else { throw XCTSkip("not ready") }
             return r
         }
-        XCTAssertNil(UpgradeNotice.of(try ready(#"{"type":"ready","seq":3,"api":1}"#)))
+        XCTAssertEqual(UpgradeNotice.of(try ready(#"{"type":"ready","seq":3,"api":1}"#)), .channelUpgrade)
         XCTAssertNil(UpgradeNotice.of(try ready(#"{"type":"ready","seq":3,"api":2}"#)))
+        XCTAssertNil(UpgradeNotice.of(try ready(#"{"type":"ready","seq":3,"api":3}"#)))
         XCTAssertEqual(UpgradeNotice.of(try ready(#"{"type":"ready","seq":3,"api":0}"#)), .channelUpgrade)
         XCTAssertEqual(UpgradeNotice.of(try ready(#"{"type":"ready","seq":3}"#)), .channelUpgrade)
     }

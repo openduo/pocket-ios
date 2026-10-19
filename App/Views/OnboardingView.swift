@@ -3,7 +3,7 @@
 
 import SwiftUI
 
-/// First run (design §4.1): Tailscale login → find 多多 → add Passport (optional).
+/// First run (design §4.1): Tailscale login → pair with 多多 → add Passport (optional).
 struct OnboardingView: View {
     @EnvironmentObject var model: AppModel
     @State private var step = 0
@@ -22,7 +22,7 @@ struct OnboardingView: View {
             case 0: tailnetStep
             case 1:
                 NavigationStack {
-                    ConnectionEditor(mode: .onboarding) { step = 2 }
+                    PairingView(onboarding: true) { step = 2 }
                 }
             default: passportStep
             }
@@ -30,6 +30,8 @@ struct OnboardingView: View {
         .background(Palette.background.ignoresSafeArea())
         .onAppear { if model.tailnet.backend_state == "Running" { step = max(step, 1) } }
         .onChange(of: model.tailnet.backend_state) { _, s in if s == "Running", step == 0 { step = 1 } }
+        // Paired from a tapped link's sheet.
+        .onChange(of: model.settings.isComplete) { _, done in if done, step < 2 { step = 2 } }
     }
 
     private var tailnetStep: some View {
