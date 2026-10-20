@@ -15,6 +15,7 @@ struct Composer: View {
     @State private var showPhotos = false
     @State private var showCamera = false
     @State private var showFiles = false
+    @State private var showLocation = false
 
     private var holdToTalk: Bool { model.holdToTalk }
 
@@ -76,6 +77,7 @@ struct Composer: View {
                     Button { showCamera = true } label: { Label(String(localized: "拍照"), systemImage: "camera") }
                         .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
                     Button { showFiles = true } label: { Label(String(localized: "文件"), systemImage: "doc") }
+                    Button { showLocation = true } label: { Label(String(localized: "位置"), systemImage: "location") }
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 17, weight: .semibold))
@@ -83,7 +85,7 @@ struct Composer: View {
                         .frame(width: 38, height: 38)
                         .background(Circle().fill(Palette.chip))
                 }
-                .accessibilityLabel(String(localized: "添加照片或文件"))
+                .accessibilityLabel(String(localized: "添加照片、文件或位置"))
 
                 // In hold-to-talk mode only attachments can be sent; a hidden draft stays a draft.
                 if !model.chips.isEmpty || (!holdToTalk && !model.draftText.isEmpty) {
@@ -109,6 +111,14 @@ struct Composer: View {
         .fileImporter(isPresented: $showFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { r in
             guard case .success(let urls) = r else { return }
             for u in urls { addFile(u) }
+        }
+        .sheet(isPresented: $showLocation) {
+            // The place goes into the draft as text, editable before it is sent.
+            LocationPicker { line in
+                model.voiceInput = false
+                model.draftText = model.draftText.isEmpty ? line : model.draftText + "\n" + line
+                focused = true
+            }
         }
         .fullScreenCover(isPresented: $showCamera) {
             CameraPicker { image in

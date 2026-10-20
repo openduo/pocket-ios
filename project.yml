@@ -78,6 +78,7 @@ targets:
         NSMicrophoneUsageDescription: 按住说话和环境模式需要使用麦克风。
         NSCameraUsageDescription: 在对话中拍照上传和扫描配对二维码需要使用相机。
         NSPhotoLibraryUsageDescription: 在对话中上传图片需要访问照片。
+        NSLocationWhenInUseUsageDescription: 在对话中发送位置时，用定位把地图移到你所在的地方。
         NSLocalNetworkUsageDescription: 内置的 Tailscale 节点会探测局域网以建立直连。
         # The share extension's hand-off (Shared/ShareInbox.swift).
         PocketAppGroup: group.$(POCKET_BUNDLE_ID)

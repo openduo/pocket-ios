@@ -2007,12 +2007,92 @@
         }
       }
     },
-    "添加照片或文件": {
+    "添加照片、文件或位置": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Add a photo or file"
+            "value": "Add a photo, file or location"
+          }
+        }
+      }
+    },
+    "位置": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Location"
+          }
+        }
+      }
+    },
+    "搜索地点": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search places"
+          }
+        }
+      }
+    },
+    "定位权限已关闭，可以在设置里打开，或者拖动地图选点。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Location access is off. Turn it on in Settings, or drag the map to pick a place."
+          }
+        }
+      }
+    },
+    "正在定位…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Locating…"
+          }
+        }
+      }
+    },
+    "地图中心": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Map centre"
+          }
+        }
+      }
+    },
+    "使用这个位置": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use this location"
+          }
+        }
+      }
+    },
+    "地图坐标": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "map coordinates"
+          }
+        }
+      }
+    },
+    "，大致位置": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": ", approximate"
           }
         }
       }

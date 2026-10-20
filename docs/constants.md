@@ -46,6 +46,7 @@ probes on an iPhone XS Max and the Passport during development.
 | Session drawer width | 82 % of the screen, at most 340 pt | display | the room behind stays visible as the way back |
 | `TryChannel.stepDelay` | 0.9 s | display, **no data** | try-it mode only: spaces the scripted thinking and tool frames so the steps can be read; a real turn's timing comes from the brain |
 | Image viewer max zoom | image pixels ÷ fitted screen pixels (≥ 1) | derived | one image pixel per screen pixel; further zoom shows no more detail |
+| Location coordinates | 5 decimals | display | about a metre; the inserted line is read by 多多, not used for navigation |
 | Quote length | none | — | `<user-quote>` carries the whole quoted message; the bubble draws three lines of it |
 
 ## Native app (design `docs/design/native-app.md`)
