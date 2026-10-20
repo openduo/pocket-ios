@@ -31,15 +31,27 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     }
 }
 
-/// Whether this iPhone has a hinge, learnt from the first hinge update. Only a foldable gets the
-/// landscape layouts (docs/design/iphone-duo.md).
+/// Whether this iPhone has a hinge, learnt from the first hinge update and remembered for later
+/// launches. Only a foldable gets the landscape layouts (docs/design/iphone-duo.md).
+///
+/// Remembering it lets a launch in landscape (the tent) start landscape. Learnt only at launch, the
+/// window starts portrait and turns when the hinge reports; anything presented before that turn
+/// (the call view, a sheet) holds the window portrait inside the landscape screen, drawn a quarter
+/// turn off, until it is dismissed.
 @MainActor
 enum Foldable {
-    private(set) static var present = false
+    /// Holds this device's vendor identifier: a backup restored to another iPhone carries the
+    /// defaults but not the identifier, so that iPhone starts portrait-only again.
+    private static let key = "foldable.vendorID"
+    private(set) static var present: Bool = {
+        guard let id = UIDevice.current.identifierForVendor?.uuidString else { return false }
+        return UserDefaults.standard.string(forKey: key) == id
+    }()
 
     static func found() {
         guard !present else { return }
         present = true
+        if let id = UIDevice.current.identifierForVendor?.uuidString { UserDefaults.standard.set(id, forKey: key) }
         for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
             scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
         }
