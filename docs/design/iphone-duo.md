@@ -4,7 +4,11 @@ How the app lays out on the foldable. Every other iPhone keeps the phone layout 
 
 The layout follows the size classes, the window size and the fold the system reserves, never the
 device model (`DuoLayout.choose` in PocketCore, `ConversationView`). The app learns the device has a
-hinge from the first hinge update and only then allows landscape (`Foldable`, `AppDelegate`).
+hinge from the first hinge update and only then allows landscape (`Foldable`, `AppDelegate`). It
+remembers the hinge for this device, so later launches allow landscape from the first frame: a
+window that starts portrait and turns when the hinge reports stays portrait, drawn a quarter turn
+off, under anything presented before the turn (the call view, a sheet). Only the first launch after
+install still starts portrait.
 
 ## One order
 
