@@ -12,7 +12,10 @@ answer comes back to the phone and the Passport screen. Product page:
 <p align="center">
   <img src="docs/screens/passport.png" alt="The Passport screen: hold OK to talk, listening, thinking with the transcript, and DuoDuo's answer" width="80%">
 </p>
-<p align="center"><sub>The app with its built-in demo content, and the Passport running the pocket firmware.</sub></p>
+<p align="center">
+  <img src="docs/screens/duo.png" alt="DuoDuo Pocket on iPhone Duo: open flat with the conversation beside the room, and half folded on a table with the room above the fold" width="80%">
+</p>
+<p align="center"><sub>The app with its built-in demo content, on iPhone and on iPhone Duo (simulator), and the Passport running the pocket firmware.</sub></p>
 
 - A native SwiftUI conversation with 多多 for one room: text, photos and files, hold-to-talk,
   and an ambient mode in which the phone listens to the room and speaks the answers
