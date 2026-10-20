@@ -83,7 +83,8 @@ extension AppModel {
     }
 }
 
-/// One round control with its label: the call view's row, the room column and the tabletop row.
+/// One round control with its label: the call view's row, the room column, the tabletop row and the
+/// tent.
 struct AmbientControl: View {
     var icon: String
     var label: String
@@ -101,6 +102,10 @@ struct AmbientControl: View {
                     .frame(width: size, height: size)
                     .background(Circle().fill(fill))
                 Text(label).font(.footnote).foregroundStyle(Palette.secondary).lineLimit(1)
+                    // Large text sizes shrink the label within its column, apart from its neighbours,
+                    // rather than cut it.
+                    .minimumScaleFactor(0.5)
+                    .padding(.horizontal, 4)
             }
             .frame(maxWidth: .infinity)
         }
@@ -129,14 +134,17 @@ struct AmbientControl: View {
 }
 
 /// 静音 · 别说了 · 关闭 while ambient is on; 开环境模式 while it is off; the way out of a seat
-/// taken or a failure.
-struct RoomControls: View {
+/// taken or a failure. A layout's own controls (会话, 对话) join the row as equal members.
+struct RoomControls<Leading: View, Trailing: View>: View {
     @EnvironmentObject var model: AppModel
     var size: CGFloat = 52
+    @ViewBuilder var leading: Leading
+    @ViewBuilder var trailing: Trailing
 
     var body: some View {
         let a = model.ambient
         HStack(spacing: 0) {
+            leading
             if case .seatTaken = a.phase {
                 AmbientControl(icon: "ear", label: String(localized: "在这台手机上听"), fill: Palette.brand, fg: Palette.onBrand,
                                size: size) { AmbientController.shared.takeover() }
@@ -154,8 +162,13 @@ struct RoomControls: View {
                                size: size) { model.ambientTapped(expand: false) }
                     .opacity(model.voiceAvailable ? 1 : 0.4)
             }
+            trailing
         }
     }
+}
+
+extension RoomControls where Leading == EmptyView, Trailing == EmptyView {
+    init(size: CGFloat = 52) { self.init(size: size) {} trailing: {} }
 }
 
 /// The room read from a distance: the mark beside the last question and the answer in large type.
@@ -193,33 +206,13 @@ struct BigRoom: View {
         .accessibilityElement(children: .contain)
     }
 
+    /// The same round controls as the tabletop row, so four of them fit beside the mark: labelled
+    /// pills need more width than the text column has once ambient is on.
     private var tentControls: some View {
-        let a = model.ambient
-        return HStack(spacing: 12) {
-            if a.isOn {
-                pill(a.silent ? "speaker.slash.fill" : "speaker.slash", a.silent ? String(localized: "取消静音") : String(localized: "静音")) {
-                    AmbientController.shared.setSilent(!a.silent)
-                }
-                if a.speaking {
-                    pill("hand.raised.fill", String(localized: "别说了")) { AmbientController.shared.hush() }
-                }
-                pill("power", String(localized: "关闭")) { AmbientController.shared.turnOff() }
-            } else {
-                pill("waveform", String(localized: "开环境模式")) { model.ambientTapped(expand: false) }
-                    .opacity(model.voiceAvailable ? 1 : 0.4)
-            }
-            pill("text.bubble", String(localized: "对话"), action: onThread)
+        RoomControls {} trailing: {
+            AmbientControl(icon: "text.bubble", label: String(localized: "对话"), fill: Palette.chip, fg: Palette.text,
+                           size: 52, action: onThread)
         }
-    }
-
-    private func pill(_ icon: String, _ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: icon).font(.headline)
-                .padding(.horizontal, 16).padding(.vertical, 10)
-                .background(Capsule().fill(Palette.cell))
-                .foregroundStyle(Palette.brand)
-        }
-        .buttonStyle(.plain)
     }
 }
 

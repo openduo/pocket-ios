@@ -22,7 +22,7 @@ full-screen call view and the ambient pill is hidden; the ambient button toggles
 | Posture | Layout | Room | Session |
 |---|---|---|---|
 | Closed, upright (and every iPhone) | `phone`: today's column | full-screen call view and the pill | the drawer lists sessions; a session is pushed, system back |
-| Outer display in landscape (tent, or held sideways) | `tent`: the big room with its own controls (静音 · 别说了 · 关闭, or 开环境模式, and 对话) | inline | 对话 opens the thread in a sheet |
+| Outer display in landscape (tent, or held sideways) | `tent`: the big room with its own row of round controls (静音 · 别说了 · 关闭, or 开环境模式, and 对话) | inline | 对话 opens the thread in a sheet |
 | Inner display, landscape | `side`: 多多 beside the room, ambient on or off | right half, controls under it (开环境模式 while off) | opens on the left from the leading drawer; 多多 is pushed right. Back: the glass ‹ or a swipe left |
 | Inner display, portrait, flat | `stacked`: the room above 多多 while ambient is on, folded into a band by the handle | top half, or the band with small controls | the list rises from the bottom over the lower half and becomes the session; 多多 is pushed up, the room folds to its band. Back: ‹ in the bar or pulling the list down past its top |
 | Half-folded on a table | `tabletop`: the upright half only displays the room; one row of round controls (会话, 静音, 别说了, 关闭) and 多多 below | upright half | rises from the bottom over the lower half; 多多 goes behind the fold. Back: 回到多多 or pulling down |

@@ -148,7 +148,7 @@ private struct TabletopScreen: View {
         VStack(spacing: 0) {
             BigRoom().frame(height: top)
             Color.clear.frame(height: gap)
-            HStack(spacing: 0) {
+            RoomControls {
                 if model.sessionsEnabled {
                     if open {
                         AmbientControl(icon: "chevron.down", label: String(localized: "回到多多"), fill: Palette.chip, fg: Palette.text,
@@ -158,8 +158,7 @@ private struct TabletopScreen: View {
                                        size: 52) { withAnimation(.snappy) { viewer.openDrawer() } }
                     }
                 }
-                RoomControls()
-            }
+            } trailing: {}
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             GeometryReader { g in
