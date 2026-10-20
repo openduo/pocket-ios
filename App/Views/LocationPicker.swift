@@ -141,28 +141,15 @@ struct LocationPicker: View {
     }
 
     private static func reverseGeocode(_ c: CLLocationCoordinate2D) async -> Place? {
-        let location = CLLocation(latitude: c.latitude, longitude: c.longitude)
-        if #available(iOS 26.0, *) {
-            guard let request = MKReverseGeocodingRequest(location: location),
-                  let item = try? await request.mapItems.first else { return nil }
-            return place(of: item)
-        }
-        guard let mark = try? await CLGeocoder().reverseGeocodeLocation(location).first else { return nil }
-        let address = [mark.administrativeArea, mark.locality, mark.subLocality, mark.thoroughfare, mark.subThoroughfare]
-            .compactMap { $0 }.joined()
-        return Place(name: mark.name, address: address.isEmpty ? nil : address)
+        guard let n = await ReverseGeocoder.name(CLLocation(latitude: c.latitude, longitude: c.longitude)) else { return nil }
+        return Place(name: n.name, address: n.address)
     }
 
     private static func place(of item: MKMapItem) -> Place {
         Place(name: item.name, address: address(of: item))
     }
 
-    private static func address(of item: MKMapItem) -> String? {
-        if #available(iOS 26.0, *) {
-            return item.address?.fullAddress.replacingOccurrences(of: "\n", with: " ")
-        }
-        return item.placemark.title
-    }
+    private static func address(of item: MKMapItem) -> String? { ReverseGeocoder.address(of: item) }
 }
 
 /// When-in-use location permission and whether the user allowed only an approximate fix.

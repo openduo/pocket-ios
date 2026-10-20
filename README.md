@@ -25,6 +25,9 @@ answer comes back to the phone and the Passport screen. Product page:
   Opus over BLE while its button is held; the app uploads one voice note per press, tells the
   Passport the transcript, and forwards the answer to its screen.
 - Hold-to-talk in the app records with the phone microphone and uses the same voice-note path.
+- Optional, off by default: 让多多知道我到了哪 (Let DuoDuo know where I've arrived). iOS visit
+  monitoring names the places you arrive at on the phone, and the next message tells your own
+  DuoDuo the place name (no coordinates) in an `X-Ambient-Place` header.
 
 ## Get the app
 
@@ -69,7 +72,8 @@ Passport ──BLE──▶ PassportLink ─▶ PocketEngine ─▶ RESULT / REP
   while the app is active, from coalesced snapshots.
 - Background modes: `bluetooth-central` (state restoration relaunches the app for Passport
   traffic), `audio` (ambient mode keeps listening when locked, started and ended by the user) and
-  `fetch` (Background App Refresh catches up answers for the Passport).
+  `fetch` (Background App Refresh catches up answers for the Passport). Arrivals need no
+  background mode: iOS relaunches the app to deliver a visit.
 
 ## Requirements
 

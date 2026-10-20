@@ -78,7 +78,10 @@ targets:
         NSMicrophoneUsageDescription: 按住说话和环境模式需要使用麦克风。
         NSCameraUsageDescription: 在对话中拍照上传和扫描配对二维码需要使用相机。
         NSPhotoLibraryUsageDescription: 在对话中上传图片需要访问照片。
-        NSLocationWhenInUseUsageDescription: 在对话中发送位置时，用定位把地图移到你所在的地方。
+        NSLocationWhenInUseUsageDescription: 在对话中发送位置时，用定位把地图移到你所在的地方；也用于设置里的「让多多知道我到了哪」。
+        # Settings › 让多多知道我到了哪 (visit monitoring; off by default). No `location` background
+        # mode: iOS relaunches the app for a visit by itself.
+        NSLocationAlwaysAndWhenInUseUsageDescription: 只用来告诉你自己的多多你到了哪里。默认关闭，在设置里打开后才会使用。
         NSLocalNetworkUsageDescription: 内置的 Tailscale 节点会探测局域网以建立直连。
         # The share extension's hand-off (Shared/ShareInbox.swift).
         PocketAppGroup: group.$(POCKET_BUNDLE_ID)

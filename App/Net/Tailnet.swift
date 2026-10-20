@@ -269,15 +269,17 @@ final class LiveSocket: NSObject, TsbridgeLiveHandlerProtocol, @unchecked Sendab
 
     var isOpen: Bool { TryMode.active ? TryChannel.shared.liveOpen(self) : TsbridgeLiveIsOpen() }
 
-    /// Dials `path` (`ChannelPaths.live`), replacing any held socket without a close report.
-    func open(path: String, timeout: TimeInterval) throws {
+    /// Dials `path` (`ChannelPaths.live`) with extra upgrade `headers`, replacing any held socket
+    /// without a close report.
+    func open(path: String, headers: [String: String] = [:], timeout: TimeInterval) throws {
         if TryMode.active { return TryChannel.shared.openLive(self, path: path) }
         try Tailnet.shared.checkPaired(path)
         try Tailnet.shared.up(timeout: timeout)
         let target = Tailnet.shared.targetSnapshot()
+        let hdr = headers.isEmpty ? "" : String(decoding: try JSONSerialization.data(withJSONObject: headers), as: UTF8.self)
         var err: NSError?
         // The bridge adds the target's device token to the upgrade request.
-        TsbridgeLiveOpen(path, "", Int64(timeout * 1000), &err)
+        TsbridgeLiveOpen(path, hdr, Int64(timeout * 1000), &err)
         if let err {
             if DeviceAuth.isUnauthorizedOpenError(err.localizedDescription) {
                 Tailnet.shared.rejected(under: target, "live_open")

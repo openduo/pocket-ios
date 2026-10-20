@@ -16,6 +16,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // The central must exist before this returns for BLE state restoration to deliver.
         PocketEngine.shared.start()
         _ = ConversationStore.shared
+        // Before launch returns: a relaunch for a visit delivers it to this delegate.
+        ArrivalMonitor.shared.start(relaunchedForLocation: opts?[.location] != nil)
         // Registration must finish before launch ends (BGTaskScheduler requirement).
         AnswerRefresh.register()
         #if DEBUG

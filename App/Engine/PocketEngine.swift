@@ -259,8 +259,10 @@ final class PocketEngine: @unchecked Sendable {
                                   expiry: expiry)
         queue.asyncAfter(deadline: .now() + deadline, execute: expiry)
         Task.detached { [self] in
+            let place = ArrivalMonitor.shared.report()
             let report = await uploader.upload(note, room: room, within: deadline - (CPUClock.uptime() - endWall),
-                                               surface: PocketSurface.current())
+                                               surface: PocketSurface.current(), place: place)
+            ArrivalMonitor.shared.settle(place, accepted: report.outcome.messageID != nil)
             queue.async { [self] in
                 let doneWall = CPUClock.uptime(), doneCPU = CPUClock.processSeconds()
                 // One line per upload, with its CPU share (background CPU budget).

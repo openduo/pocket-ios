@@ -139,8 +139,9 @@ final class AmbientController: @unchecked Sendable {
             // The ambient engine replaces the playback-only one: a read in progress ends here.
             stopRead()
             // Ambient mode always asks `audio=1`: replace a connection opened without it before
-            // the new edge says `hello` on it.
-            if liveAudio != nil, liveAudio != wantsAudio {
+            // the new edge says `hello` on it. Likewise one opened before an arrival the room has
+            // not heard of, so the new connection carries it.
+            if liveAudio != nil, liveAudio != wantsAudio || ArrivalMonitor.shared.report() != nil {
                 liveReplaced()
                 live.close()
             }
@@ -265,13 +266,18 @@ final class AmbientController: @unchecked Sendable {
     /// Opens the room's `/live` connection, replacing the held one. Blocking.
     func openLive(_ s: ChannelSettings, since: Int?, timeout: TimeInterval) throws {
         // The old connection's state ends before the new one's first frame can arrive.
-        let audio = queue.sync {
+        let (audio, ambient) = queue.sync {
             liveReplaced()
             publish()
             liveAudio = wantsAudio
-            return wantsAudio
+            return (wantsAudio, on)
         }
-        try live.open(path: ChannelPaths.live(room: s.room, since: since, audio: audio), timeout: timeout)
+        // Ambient mode's connection carries a pending arrival; the channel gives it to the
+        // session's first turn. The upgrade succeeding counts as reported.
+        let place = ambient ? ArrivalMonitor.shared.report() : nil
+        try live.open(path: ChannelPaths.live(room: s.room, since: since, audio: audio),
+                      headers: place?.headers ?? [:], timeout: timeout)
+        ArrivalMonitor.shared.settle(place, accepted: true)
         // A new connection starts unreported, whatever reached the old one meanwhile.
         queue.async { [self] in
             surfaceSent = nil

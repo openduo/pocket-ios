@@ -86,10 +86,11 @@ public struct VoiceUploader: Sendable {
     /// The note's message id: its UUID, lowercased (the channel lowercases the key on receipt).
     public static func messageID(for note: VoiceNote) -> String { note.id.uuidString.lowercased() }
 
-    public static func headers(for note: VoiceNote, surface: Surface) -> [String: String] {
+    public static func headers(for note: VoiceNote, surface: Surface, place: PlaceReport? = nil) -> [String: String] {
         ["Content-Type": PocketConstants.voiceContentType,
          "Idempotency-Key": messageID(for: note),
          "X-Voice-Source": note.source.rawValue].merging(surface.headers) { a, _ in a }
+            .merging(place?.headers ?? [:]) { a, _ in a }
     }
 
     /// What one response means: a final outcome, or "retry".
@@ -113,9 +114,10 @@ public struct VoiceUploader: Sendable {
     }
 
     /// Uploads within `within` seconds from now (default `uploadDeadline`; the Passport path passes
-    /// what is left of its RESULT deadline). `surface` is the app's surface when the upload began.
+    /// what is left of its RESULT deadline). `surface` is the app's surface when the upload began;
+    /// `place`, a pending arrival report, rides on every attempt.
     public func upload(_ note: VoiceNote, room: String, within: TimeInterval? = nil,
-                       surface: Surface) async -> VoiceUploadReport {
+                       surface: Surface, place: PlaceReport? = nil) async -> VoiceUploadReport {
         let start = now()
         let deadline = start + (within ?? tuning.uploadDeadline)
         var report = VoiceUploadReport(outcome: .sendFailed("not attempted"), attempts: 0, trail: [], elapsed: 0)
@@ -135,7 +137,7 @@ public struct VoiceUploader: Sendable {
             report.attempts += 1
             do {
                 let (status, resBody) = try await transport.send(method: "POST", path: Self.path(room: room),
-                                                                 headers: Self.headers(for: note, surface: surface), body: body,
+                                                                 headers: Self.headers(for: note, surface: surface, place: place), body: body,
                                                                  timeout: remaining)
                 report.trail.append("\(status)")
                 switch Self.verdict(status: status, body: resBody, note: note) {

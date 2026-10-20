@@ -3714,6 +3714,36 @@
           }
         }
       }
+    },
+    "让多多知道我到了哪": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Let DuoDuo know where I've arrived"
+          }
+        }
+      }
+    },
+    "定位权限需要设为「始终」，否则这个开关不起作用。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Location access must be set to Always, or this switch has no effect."
+          }
+        }
+      }
+    },
+    "只在你到达一个地方时记下地名，随你的下一条消息告诉你自己的多多；只发地名，不发坐标。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only arrivals: the place name goes to your own DuoDuo with your next message. Names only, never coordinates."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

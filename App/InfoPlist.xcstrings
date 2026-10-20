@@ -81,18 +81,34 @@
         }
       }
     },
-    "NSLocationWhenInUseUsageDescription": {
+    "NSLocationAlwaysAndWhenInUseUsageDescription": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "When you send a location in the chat, your location moves the map to where you are."
+            "value": "Only used to tell your own DuoDuo where you have arrived. Off unless you turn it on in Settings."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "在对话中发送位置时，用定位把地图移到你所在的地方。"
+            "value": "只用来告诉你自己的多多你到了哪里。默认关闭，在设置里打开后才会使用。"
+          }
+        }
+      }
+    },
+    "NSLocationWhenInUseUsageDescription": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When you send a location in the chat, your location moves the map to where you are. Also used by Let DuoDuo know where I've arrived in Settings."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在对话中发送位置时，用定位把地图移到你所在的地方；也用于设置里的「让多多知道我到了哪」。"
           }
         }
       }
