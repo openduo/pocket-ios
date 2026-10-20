@@ -415,12 +415,18 @@ final class PocketEngine: @unchecked Sendable {
     private func deliver(_ msgs: [PhoneMessage], source: String) {
         var why = "answer"
         for m in msgs {
-            let linked = link.send(m)
+            // With the app in front the Passport stores the answer without an alert; the device
+            // decides on the first REPLY of an id, so each REPLY carries the display at its send.
+            var quiet = false
+            if case .reply(let id, _, _) = m {
+                quiet = tracker.isQuiet(replyID: id, display: PocketSurface.current().display)
+            }
+            let linked = link.send(m, quiet: quiet)
             switch m {
             case .reply(let id, true, let text):
                 if linked { tracker.handedToLink(replyID: id) }
                 AppLog.shared.log("reply", ["source": source, "id": id, "len": text.count, "awaiting": awaiting,
-                                            "linked": linked, "app": AppPhase.value])
+                                            "linked": linked, "quiet": quiet, "app": AppPhase.value])
                 update { $0.lastReply = text }
                 saveReplyMemory()
             case .reply:

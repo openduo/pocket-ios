@@ -174,6 +174,44 @@ final class ReplyTrackerTests: XCTestCase {
 
     /// The answer came while the socket was down: its row (replayed or fetched) names the
     /// message and is the reply, even with a newer answer in the batch.
+    // ble-protocol §7 item 10: with the app in front a forwarded answer is quiet; the answer to a
+    // Passport press never is.
+    func testQuietFollowsTheDisplayExceptForThePressAnswer() {
+        var t = ReplyTracker()
+        guard case .reply(let proactive, false, _) = t.handle(frame: ["type": "duoduo_said", "speech_id": "c-1", "text": "早"]).first
+        else { return XCTFail() }
+        XCTAssertTrue(t.isQuiet(replyID: proactive, display: .phone))
+        XCTAssertTrue(t.isQuiet(replyID: proactive, display: .phoneAwake))
+        XCTAssertFalse(t.isQuiet(replyID: proactive, display: .passport))
+        XCTAssertFalse(t.isQuiet(replyID: proactive, display: .later))
+
+        t.expect(messageID: "m1")
+        // Another answer during the wait is forwarded as usual: quiet in front.
+        guard case .reply(let other, true, _) = t.handle(frame: final("别的", ids: ["m0"])).first else { return XCTFail() }
+        XCTAssertTrue(t.isQuiet(replyID: other, display: .phone))
+        // The press's answer alerts as before, whatever the display.
+        guard case .reply(let reply, true, _) = t.handle(frame: final("回答", ids: ["m1"])).first else { return XCTFail() }
+        XCTAssertFalse(t.awaiting)
+        XCTAssertFalse(t.isQuiet(replyID: reply, display: .phone))
+        XCTAssertFalse(t.isQuiet(replyID: reply, display: .phoneAwake))
+        // The next answer, with no press pending, is quiet again in front.
+        guard case .reply(let next, true, _) = t.handle(frame: final("之后")).first else { return XCTFail() }
+        XCTAssertTrue(t.isQuiet(replyID: next, display: .phone))
+    }
+
+    func testPartialsOfAnAdoptedWaitAnswerThePress() {
+        // A wait adopted from KEEPALIVE has no message id: the next answer, partials included, is
+        // the press's answer and is never quiet.
+        var t = ReplyTracker()
+        t.expect(messageID: nil)
+        guard case .reply(let p, false, _) = t.handle(frame: ["type": "duoduo_said", "speech_id": "c-2", "text": "好"]).first
+        else { return XCTFail() }
+        XCTAssertFalse(t.isQuiet(replyID: p, display: .phone))
+        guard case .reply(let f, true, _) = t.handle(frame: final("好的", speech: "c-2")).first else { return XCTFail() }
+        XCTAssertEqual(f, p)
+        XCTAssertFalse(t.isQuiet(replyID: f, display: .phone))
+    }
+
     func testRowsDeliverTheAnswerNamingTheWaitedMessage() {
         var t = ReplyTracker()
         t.expect(messageID: "m9")

@@ -10,7 +10,8 @@ public enum PocketConstants {
     public static let protoMajor: UInt8 = 1
     /// Minor 1 adds WORK (ble-protocol §7 item 8); a minor-0 device ignores the unknown type.
     /// Minor 2 adds the language byte after APP_STATE (item 9); older devices ignore it.
-    public static let protoMinor: UInt8 = 2
+    /// Minor 3 adds the REPLY quiet bit in the PDU flags (item 10); older devices ignore it.
+    public static let protoMinor: UInt8 = 3
 
     /// The channel's client-API major this app speaks: the channel announces its own in
     /// `ready.api`, and a lower or absent value means the channel must be upgraded. It is raised

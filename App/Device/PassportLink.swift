@@ -27,8 +27,9 @@ final class PassportLink: NSObject, CBCentralManagerDelegate, CBPeripheralDelega
     private let rxUUID = CBUUID(string: PocketConstants.rxCharacteristicUUID)
     private var decoder = DeviceLinkDecoder()
 
-    /// Outgoing messages not yet handed to CoreBluetooth, and the fragments of the one in flight.
-    private var outbox: [PhoneMessage] = []
+    /// Outgoing messages not yet handed to CoreBluetooth (with the REPLY quiet bit), and the
+    /// fragments of the one in flight.
+    private var outbox: [(message: PhoneMessage, quiet: Bool)] = []
     private var inFlight: [Data] = []
 
     // Callbacks into the engine, all on `queue`.
@@ -68,15 +69,16 @@ final class PassportLink: NSObject, CBCentralManagerDelegate, CBPeripheralDelega
     // MARK: send
 
     /// Queues a message for the device; dropped when no link is up. Returns whether it was queued.
+    /// `quiet` applies to REPLY only (ble-protocol §7 item 10).
     @discardableResult
-    func send(_ m: PhoneMessage) -> Bool {
+    func send(_ m: PhoneMessage, quiet: Bool = false) -> Bool {
         guard state == .ready else { return false }
         // Replace semantics: a newer partial text for the same reply supersedes a queued one.
         if case .reply(let id, false, _) = m,
-           let i = outbox.firstIndex(where: { if case .reply(id, false, _) = $0 { true } else { false } }) {
-            outbox[i] = m
+           let i = outbox.firstIndex(where: { if case .reply(id, false, _) = $0.message { true } else { false } }) {
+            outbox[i] = (m, quiet)
         } else {
-            outbox.append(m)
+            outbox.append((m, quiet))
         }
         flush()
         return true
@@ -87,10 +89,10 @@ final class PassportLink: NSObject, CBCentralManagerDelegate, CBPeripheralDelega
         while true {
             if inFlight.isEmpty {
                 guard !outbox.isEmpty else { return }
-                let m = outbox.removeFirst()
+                let (m, quiet) = outbox.removeFirst()
                 attPayload = p.maximumWriteValueLength(for: .withoutResponse)
                 do {
-                    inFlight = try m.fragments(attPayload: attPayload)
+                    inFlight = try m.fragments(attPayload: attPayload, quiet: quiet)
                 } catch {
                     AppLog.shared.log("send_drop", ["err": "\(error)", "type": m.kind.rawValue])
                     continue
