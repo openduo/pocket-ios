@@ -33,6 +33,10 @@ full-screen call view and the ambient pill is hidden; the ambient button toggles
 
 Every function appears once per layout: what the bar offers is not repeated in the content.
 
+In `tabletop` a hairline (the composer's) marks the fold under the room's controls, and the
+conversation scrolls out under it with the system's soft scroll edge, so no row looks cut. `side`
+needs neither: its room and conversation meet at a vertical edge rows never cross.
+
 ## The vertical bar
 
 Where the system places its vertical bar at the trailing edge (the closed outer display, and the

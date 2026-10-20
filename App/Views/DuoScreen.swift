@@ -171,6 +171,10 @@ private struct TabletopScreen: View {
                 }
                 .overlay(alignment: .bottom) { if viewer.state.drawerOpen { BottomDrawer(viewer: viewer, height: g.size.height) } }
             }
+            // The fold between the room and the conversation: a hairline, and rows scroll out
+            // softly under it instead of being cut at the controls.
+            .safeAreaBar(edge: .top, spacing: 0) { Rectangle().fill(Palette.hairline).frame(height: 0.5) }
+            .scrollEdgeEffectStyle(.soft, for: .top)
             .clipped()
         }
         .background(Palette.background.ignoresSafeArea())
