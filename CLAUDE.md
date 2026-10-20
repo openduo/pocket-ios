@@ -37,8 +37,8 @@ Device signing reads `DEVELOPMENT_TEAM` (and optionally `POCKET_BUNDLE_ID`) from
 - Every `swift`, `go`, `c`, `h`, `sh`, `py` and `xcconfig` file starts with the two-line SPDX header
   (`FSL-1.1-Apache-2.0`), after the shebang when there is one. `scripts/check-license.sh` checks it.
   Bundled third-party code is listed in `THIRD_PARTY_NOTICES.md`; update it with any new dependency.
-- The app icon, the 多多 / DuoDuo and OpenDuo names and the mockups are brand assets outside the
-  code licence (`NOTICE`); the avatar artwork follows the code licence.
+- The app icon, the 多多 mark (`App/Views/LogoGeometry.swift`), the 多多 / DuoDuo and OpenDuo names
+  and the mockups are brand assets outside the code licence (`NOTICE`).
 - The channel host, the room name and tailnet names are entered in the app and stored in
   UserDefaults. Never put host names, tailnet addresses, room names, team IDs, device IDs,
   credentials, logs or recordings in tracked files.

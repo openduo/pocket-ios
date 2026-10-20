@@ -37,7 +37,7 @@ struct OnboardingView: View {
     private var tailnetStep: some View {
         VStack(spacing: 16) {
             Spacer()
-            AvatarView(pose: .offline, size: 120)
+            LogoMark(mood: .idle).frame(width: 150, height: 150)
             Text(String(localized: "先连上你的网络")).font(.title.weight(.bold))
             Text(String(localized: "多多随身通过你的 Tailscale 网络找到多多，不经过公网，也不用装 VPN。"))
                 .font(.subheadline).foregroundStyle(Palette.secondary).multilineTextAlignment(.center)

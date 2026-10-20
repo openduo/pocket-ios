@@ -45,6 +45,9 @@ final class SessionViewer: ObservableObject {
 
     private func send(_ frame: [String: Any]) {
         guard active else { return }
+        #if DEBUG
+        if Demo.active { return Demo.answer(frame, to: self) }
+        #endif
         AmbientController.shared.live.send(json: frame)
     }
 

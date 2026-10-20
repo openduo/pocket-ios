@@ -24,6 +24,26 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         #endif
         return true
     }
+
+    /// Info.plist lists landscape for the foldable; every other iPhone stays portrait.
+    func application(_ app: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        Foldable.present ? .allButUpsideDown : .portrait
+    }
+}
+
+/// Whether this iPhone has a hinge, learnt from the first hinge update. Only a foldable gets the
+/// landscape layouts (docs/design/iphone-duo.md).
+@MainActor
+enum Foldable {
+    private(set) static var present = false
+
+    static func found() {
+        guard !present else { return }
+        present = true
+        for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
+            scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        }
+    }
 }
 
 @main
@@ -74,10 +94,24 @@ struct RootView: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
-        if model.onboarding {
-            OnboardingView()
+        Group {
+            if model.onboarding {
+                OnboardingView()
+            } else {
+                ConversationView()
+            }
+        }
+        .modifier(HingeProbe())
+    }
+}
+
+/// Reports a hinge once one shows up; nothing before iOS 27.1, which has no foldable.
+private struct HingeProbe: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 27.1, *) {
+            content.onHingeChange { _, new in if new.hinge != nil { Foldable.found() } }
         } else {
-            ConversationView()
+            content
         }
     }
 }

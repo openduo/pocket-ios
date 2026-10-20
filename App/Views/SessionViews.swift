@@ -123,8 +123,17 @@ private func activityText(_ d: Date) -> String {
 /// An opened session, read-only: its recent rows as the daemon holds them, then live rows.
 struct SessionThreadView: View {
     @ObservedObject var viewer: SessionViewer
+    /// The foldable's session pane closes by a swipe toward the edge it leaves by: leading in
+    /// landscape, down (past the top of the list) in portrait.
+    var onSwipeLeading: (() -> Void)?
+    var onPullDown: (() -> Void)?
     private static let bottomID = "session-bottom"
     private static let readingWidth: CGFloat = 640
+    /// A swipe closes the pane when it would carry this far. Display only, tuned by hand on the
+    /// iPhone Duo simulator.
+    static let swipeToClose: CGFloat = 160
+    /// Pulling the list down this far past its top closes the pane. Display only, as above.
+    static let pullToClose: CGFloat = 90
 
     var body: some View {
         let st = viewer.state
@@ -151,11 +160,36 @@ struct SessionThreadView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
+                // Inside the scroll view: outside it, the scroll view's pan takes the drag first.
+                .contentShape(Rectangle())
+                .simultaneousGesture(DragGesture(minimumDistance: 12).onEnded { v in
+                    guard let close = onSwipeLeading, abs(v.translation.width) > abs(v.translation.height),
+                          -v.predictedEndTranslation.width > Self.swipeToClose else { return }
+                    withAnimation(.smooth(duration: 0.4)) { close() }
+                }, isEnabled: onSwipeLeading != nil)
             }
             .defaultScrollAnchor(.bottom)
+            .modifier(PullToClose(action: onPullDown))
             .onChange(of: st.items.count) { _, _ in
                 DispatchQueue.main.async { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
             }
+        }
+    }
+}
+
+/// Calls `action` when the list is pulled down past its top by `SessionThreadView.pullToClose`.
+private struct PullToClose: ViewModifier {
+    var action: (() -> Void)?
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *), let action {
+            content.onScrollGeometryChange(for: Bool.self) { g in
+                g.contentOffset.y + g.contentInsets.top < -SessionThreadView.pullToClose
+            } action: { _, past in
+                if past { withAnimation(.smooth(duration: 0.4)) { action() } }
+            }
+        } else {
+            content
         }
     }
 }

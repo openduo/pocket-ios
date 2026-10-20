@@ -74,6 +74,37 @@ final class VoiceIO: @unchecked Sendable {
         return Float(bitPattern: levelBits)
     }
 
+    private var outputLevelBits: UInt32 = 0 // Float bit pattern, guarded by `lock`
+    /// Level of what is playing, after the 静音 volume, on the mic level's scale. Sampled by the UI.
+    var outputLevel: Float {
+        lock.lock(); defer { lock.unlock() }
+        return Float(bitPattern: outputLevelBits)
+    }
+
+    /// One block's RMS on the meter scale, followed with the web edge's attack/decay
+    /// (`capture.js`): rises at once, falls smoothly.
+    private static func follow(_ prevBits: UInt32, rms: Float) -> UInt32 {
+        let scaled = min(1, rms * 6)
+        let prev = Float(bitPattern: prevBits)
+        return (scaled > prev ? scaled : prev * 0.82 + scaled * 0.18).bitPattern
+    }
+
+    /// Measures what the mixer sends to the output. The input is never connected to the mixer,
+    /// so this is the player alone.
+    private func tapOutput(_ e: AVAudioEngine) {
+        let mixer = e.mainMixerNode
+        mixer.installTap(onBus: 0, bufferSize: 1024, format: mixer.outputFormat(forBus: 0)) { [weak self] buf, _ in
+            guard let self, let ch = buf.floatChannelData, buf.frameLength > 0 else { return }
+            let n = Int(buf.frameLength)
+            var sum: Float = 0
+            for i in 0..<n { let v = ch[0][i]; sum += v * v }
+            let rms = (sum / Float(n)).squareRoot()
+            lock.lock()
+            outputLevelBits = Self.follow(outputLevelBits, rms: rms)
+            lock.unlock()
+        }
+    }
+
     private init() {
         let nc = NotificationCenter.default
         nc.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: nil) { [weak self] _ in
@@ -164,6 +195,7 @@ final class VoiceIO: @unchecked Sendable {
         let p = AVAudioPlayerNode()
         e.attach(p)
         e.connect(p, to: e.mainMixerNode, format: playFormat)
+        tapOutput(e)
         e.prepare()
         NotificationCenter.default.addObserver(self, selector: #selector(configChanged(_:)),
                                                name: .AVAudioEngineConfigurationChange, object: e)
@@ -203,6 +235,7 @@ final class VoiceIO: @unchecked Sendable {
         // The tap's buffer size is a request; iOS delivers 100 ms blocks regardless
         // (docs/constants.md, hold-to-talk tap size).
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buf, when in self?.consume(buf, when) }
+        tapOutput(e)
         HoldTiming.shared.mark("engine_built")
         e.prepare()
         NotificationCenter.default.addObserver(self, selector: #selector(configChanged(_:)),
@@ -332,6 +365,7 @@ final class VoiceIO: @unchecked Sendable {
         voiceProcessing = false
         playbackOnly = false
         levelBits = 0
+        outputLevelBits = 0
         // The player's blocks go with it.
         queued = 0
         playGen += 1
@@ -341,6 +375,7 @@ final class VoiceIO: @unchecked Sendable {
         p?.stop()
         // A playback-only engine has no input node; asking for one would create it.
         if !playOnly { e.inputNode.removeTap(onBus: 0) }
+        e.mainMixerNode.removeTap(onBus: 0)
         e.stop()
     }
 
@@ -387,12 +422,11 @@ final class VoiceIO: @unchecked Sendable {
         // Level: O(n) over samples already captured (no second sampler).
         var sum: Float = 0
         for s in samples { let v = Float(s) / 32768; sum += v * v }
-        let scaled = min(1, (sum / Float(max(1, samples.count))).squareRoot() * 6)
-        if scaled > 0, HoldTiming.shared.wants("first_signal") { HoldTiming.shared.mark("first_signal") }
+        let rms = (sum / Float(max(1, samples.count))).squareRoot()
+        if rms > 0, HoldTiming.shared.wants("first_signal") { HoldTiming.shared.mark("first_signal") }
 
         lock.lock()
-        let prev = Float(bitPattern: levelBits)
-        levelBits = (scaled > prev ? scaled : prev * 0.82 + scaled * 0.18).bitPattern
+        levelBits = Self.follow(levelBits, rms: rms)
         let noteEnc = noteEncoder, ambEnc = ambientEncoder, sink = ambientSink
         lock.unlock()
 

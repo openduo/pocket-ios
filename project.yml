@@ -87,7 +87,8 @@ targets:
             CFBundleURLSchemes: [duoduopocket]
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
-        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # Landscape is for the foldable's layouts; AppDelegate keeps every other iPhone portrait.
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         # The embedded Tailscale node (WireGuard: ChaCha20-Poly1305, Curve25519) uses standard
         # published algorithms, not proprietary ones, and the app is not on the French store.
         # App Store Connect requires export documentation only for proprietary cryptography or

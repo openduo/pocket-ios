@@ -43,13 +43,6 @@ extension UIColor {
     }
 }
 
-/// 多多's live state as a pose (design §2 table).
-enum Pose: String {
-    case listening, heard, received, thinking, tool, generating, tts, muted, deaf, offline, sensesoff
-
-    var image: Image { Image("avatar-" + rawValue) }
-}
-
 /// Bubble with continuous 19 pt corners and a smaller tail corner (design §2, decision Q1).
 struct BubbleShape: Shape {
     var mine: Bool

@@ -265,6 +265,26 @@
         }
       }
     },
+    "上推收起": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Push up to fold"
+          }
+        }
+      }
+    },
+    "下拉展开": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pull down to open"
+          }
+        }
+      }
+    },
     "不连接网络，用演示数据试用所有功能": {
       "localizations": {
         "en": {
@@ -331,6 +351,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Messages, recordings and files in try-it mode stay on this phone and are all deleted when you exit."
+          }
+        }
+      }
+    },
+    "你：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You: %@"
           }
         }
       }
@@ -641,6 +671,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Receiver"
+          }
+        }
+      }
+    },
+    "回到多多": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Back to DuoDuo"
           }
         }
       }
@@ -995,6 +1035,16 @@
         }
       }
     },
+    "隐藏对话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide chat"
+          }
+        }
+      }
+    },
     "导出 Passport 日志": {
       "localizations": {
         "en": {
@@ -1021,6 +1071,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "The cerebellum and the channel run different versions; upgrade both together"
+          }
+        }
+      }
+    },
+    "展开房间": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open the room"
           }
         }
       }
@@ -1161,6 +1221,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Open-source licences"
+          }
+        }
+      }
+    },
+    "开环境模式": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ambient on"
           }
         }
       }
@@ -1457,6 +1527,16 @@
         }
       }
     },
+    "按住 Passport 说话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hold the Passport to talk"
+          }
+        }
+      }
+    },
     "按住下方的按钮说话": {
       "localizations": {
         "en": {
@@ -1563,6 +1643,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Back to chat"
+          }
+        }
+      }
+    },
+    "收起房间": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fold the room"
           }
         }
       }
@@ -2077,6 +2167,16 @@
         }
       }
     },
+    "（%@：%@）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " (%1$@: %2$@)"
+          }
+        }
+      }
+    },
     "地图坐标": {
       "localizations": {
         "en": {
@@ -2113,6 +2213,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Photo-%@.%@"
+          }
+        }
+      }
+    },
+    "环境模式关着": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ambient mode is off"
+          }
+        }
+      }
+    },
+    "环境模式，已开，关闭": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ambient mode, on, turn off"
           }
         }
       }

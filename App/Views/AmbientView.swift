@@ -7,7 +7,10 @@ import SwiftUI
 /// Ambient mode as a call (decision Q2): full screen, minimised to a pill in the conversation.
 struct AmbientView: View {
     @EnvironmentObject var model: AppModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The conversation shown over the room, remembered across openings.
+    @AppStorage("ambient.transcript") private var transcript = false
+
+    private var size: CGFloat { transcript ? 52 : 64 }
 
     var body: some View {
         let a = model.ambient
@@ -30,87 +33,35 @@ struct AmbientView: View {
             }
             .padding(.horizontal, 12)
 
-            Spacer(minLength: 8).layoutPriority(-2)
-            // The dog gives way first: at large text sizes it shrinks so the status, captions
-            // and the controls stay on screen.
-            Rings(pose: model.presence.pose, live: a.phase == .listening || a.speaking, animate: !reduceMotion)
-                .frame(maxWidth: 250, maxHeight: 250)
-                .aspectRatio(1, contentMode: .fit)
-                .layoutPriority(-1)
-            VStack(spacing: 6) {
-                Text(title).font(.title.weight(.bold)).foregroundStyle(Palette.text).lineLimit(1)
-                if let step = toolStep {
-                    // The working card's current step line (ToolLine rules, never raw input), one
-                    // line as on the card.
-                    Text(step)
-                        .font(.subheadline)
-                        .foregroundStyle(Palette.text)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .multilineTextAlignment(.center)
-                }
-                Text(subtitle).font(.subheadline).foregroundStyle(Palette.secondary).multilineTextAlignment(.center)
-                    .lineLimit(2)
+            if transcript {
+                // The conversation over the room: the mark steps back to the top and the thread
+                // takes the middle. Read only; typing is the conversation's job.
+                LogoMark(mood: model.presence.mood)
+                    .frame(width: 120, height: 120)
+                Text(model.ambientTitle).font(.headline).foregroundStyle(Palette.text).lineLimit(1)
+                takeBack(a)
+                ThreadView()
+                    // Rows fade in under the mark and out above the controls.
+                    .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.06),
+                                                 .init(color: .black, location: 0.95), .init(color: .clear, location: 1)],
+                                         startPoint: .top, endPoint: .bottom))
+                    .padding(.bottom, 8)
+                    .transition(.opacity)
+                thermal(a)
+            } else {
+                room(a)
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 18)
-            .fixedSize(horizontal: false, vertical: true)
-            .accessibilityElement(children: .combine)
-
-            if case .seatTaken = a.phase {
-                Button(String(localized: "在这台手机上听")) { AmbientController.shared.takeover() }
-                    .buttonStyle(PrimaryButtonStyle()).frame(maxWidth: 220).padding(.top, 14)
-            } else if a.phase == .deaf || isFailed {
-                Button(String(localized: "重新打开")) { AmbientController.shared.reopen() }
-                    .buttonStyle(PrimaryButtonStyle()).frame(maxWidth: 220).padding(.top, 14)
-            }
-
-            if let caption {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label(String(localized: "多多"), systemImage: "speaker.wave.2.fill")
-                        .font(.caption).foregroundStyle(Palette.tertiary)
-                    Text(caption)
-                        .font(.body)
-                        .foregroundStyle(Palette.theirsText)
-                        .lineLimit(5)
-                        .truncationMode(.head)
-                }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 19, style: .continuous).fill(Palette.theirsFill))
-                .padding(.horizontal, 20)
-                .padding(.top, 20)
-            }
-            if let heard = model.chat.lastHeard {
-                HStack(spacing: 6) {
-                    Image(systemName: "ear").font(.caption)
-                    Text(heard).font(.footnote).lineLimit(2)
-                }
-                .foregroundStyle(Palette.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 24)
-                .padding(.top, 10)
-            }
-            if a.thermalWarning {
-                Text(String(localized: "手机有点热，环境模式会更耗电")).font(.caption).foregroundStyle(Palette.attention).padding(.top, 8)
-            }
-            Spacer(minLength: 12).layoutPriority(-2)
 
             HStack(spacing: 0) {
-                control(a.silent ? "speaker.slash.fill" : "speaker.slash", a.silent ? String(localized: "取消静音") : String(localized: "静音"),
-                        fill: a.silent ? Palette.text : Palette.chip, fg: a.silent ? Palette.background : Palette.text) {
-                    AmbientController.shared.setSilent(!a.silent)
+                AmbientControl.silence(a, size: size)
+                AmbientControl.hush(a, size: size)
+                AmbientControl(icon: transcript ? "text.bubble.fill" : "text.bubble",
+                               label: transcript ? String(localized: "隐藏对话") : String(localized: "对话"),
+                               fill: transcript ? Palette.text : Palette.chip, fg: transcript ? Palette.background : Palette.text,
+                               size: size) {
+                    withAnimation(.snappy) { transcript.toggle() }
                 }
-                control("hand.raised.fill", String(localized: "别说了"), fill: a.speaking ? Palette.brand : Palette.chip,
-                        fg: a.speaking ? Palette.onBrand : Palette.placeholder) {
-                    AmbientController.shared.hush()
-                }
-                .disabled(!a.speaking)
-                control("text.bubble", String(localized: "对话"), fill: Palette.chip, fg: Palette.text) { model.ambientExpanded = false }
-                control("power", String(localized: "关闭"), fill: Color(uiColor: .systemRed), fg: .white) {
-                    AmbientController.shared.turnOff()
-                    model.ambientExpanded = false
-                }
+                AmbientControl.off(size: size) { model.ambientExpanded = false }
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 16)
@@ -121,101 +72,82 @@ struct AmbientView: View {
         .accessibilityAction(.magicTap) { AmbientController.shared.hush() }
     }
 
-    private var isFailed: Bool { if case .failed = model.ambient.phase { true } else { false } }
-
-    private func control(_ icon: String, _ label: String, fill: Color, fg: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(fg)
-                    .frame(width: 64, height: 64)
-                    .background(Circle().fill(fill))
-                Text(label).font(.footnote).foregroundStyle(Palette.secondary)
+    /// The room alone: the mark, the state, and what is being said.
+    @ViewBuilder private func room(_ a: AmbientSnapshot) -> some View {
+        Spacer(minLength: 8).layoutPriority(-2)
+        // The mark gives way first: at large text sizes it shrinks so the status, captions and
+        // the controls stay on screen.
+        LogoMark(mood: model.presence.mood)
+            .frame(maxWidth: 280, maxHeight: 280)
+            .aspectRatio(1, contentMode: .fit)
+            .layoutPriority(-1)
+        VStack(spacing: 6) {
+            Text(model.ambientTitle).font(.title.weight(.bold)).foregroundStyle(Palette.text).lineLimit(1)
+            if let step = model.ambientToolStep {
+                // The working card's current step line (ToolLine rules, never raw input), one
+                // line as on the card.
+                Text(step)
+                    .font(.subheadline)
+                    .foregroundStyle(Palette.text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .multilineTextAlignment(.center)
             }
-            .frame(maxWidth: .infinity)
+            Text(model.ambientSubtitle).font(.subheadline).foregroundStyle(Palette.secondary).multilineTextAlignment(.center)
+                .lineLimit(2)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(label)
-    }
+        .padding(.horizontal, 24)
+        .padding(.top, 10)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .combine)
 
-    private var title: String {
-        let a = model.ambient
-        switch a.phase {
-        case .off: return String(localized: "已关闭")
-        case .starting: return String(localized: "正在打开麦克风…")
-        case .seatTaken: return String(localized: "另一台设备在听")
-        case .deaf: return String(localized: "听不到了")
-        case .interrupted: return String(localized: "已暂停")
-        case .failed: return String(localized: "出了问题")
-        case .listening:
-            if a.speaking { return String(localized: "正在说") }
-            if let w = model.chat.working {
-                switch w.phase {
-                case .thinking, .received: return String(localized: "在想")
-                case .tool: return String(localized: "在查")
-                case .streaming: return String(localized: "正在说")
-                }
+        takeBack(a)
+
+        if let caption = model.ambientCaption {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(String(localized: "多多"), systemImage: "speaker.wave.2.fill")
+                    .font(.caption).foregroundStyle(Palette.tertiary)
+                Text(caption)
+                    .font(.body)
+                    .foregroundStyle(Palette.theirsText)
+                    .lineLimit(5)
+                    .truncationMode(.head)
             }
-            return a.pressMuted ? String(localized: "按键说话中") : String(localized: "在听")
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 19, style: .continuous).fill(Palette.theirsFill))
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
         }
-    }
-
-    /// 「Bash Show disk space」 under 在查, while a tool runs and nothing is being said.
-    private var toolStep: String? {
-        guard model.ambient.phase == .listening, !model.ambient.speaking else { return nil }
-        return model.chat.working?.toolLabel
-    }
-
-    private var subtitle: String {
-        let a = model.ambient
-        switch a.phase {
-        case .seatTaken: return String(localized: "同一个房间只能有一台设备在听")
-        case .deaf: return String(localized: "房间没有收到声音")
-        case .interrupted: return String(localized: "来电或其他声音占用了麦克风，结束后会接着听")
-        case .failed(let why): return why
-        case .starting: return a.route
-        default:
-            if a.silent { return String(localized: "已静音：还在听，回复只显示在屏幕上") }
-            if a.speaking { return a.speakingFiller ? String(localized: "马上回答你") : String(localized: "说话就能打断它") }
-            return "\(a.route) · \(a.aec ? String(localized: "回声消除已开") : String(localized: "回声消除未开"))"
-        }
-    }
-
-    private var caption: String? {
-        if let w = model.chat.working, w.phase == .streaming, !w.text.isEmpty { return w.text }
-        guard model.ambient.speaking, !model.ambient.speakingFiller else { return nil }
-        for r in model.chat.rows.reversed() {
-            if case .provisional(let p, _) = r { return p.text }
-            if case .duoduo(let d) = r { return d.text }
-        }
-        return nil
-    }
-}
-
-/// The dog with level rings (design §4.7). The rings sample the mic level only while visible.
-struct Rings: View {
-    var pose: Pose
-    var live: Bool
-    var animate: Bool
-
-    var body: some View {
-        GeometryReader { g in
-            let side = min(g.size.width, g.size.height)
-            TimelineView(.periodic(from: .now, by: LevelTrail.interval)) { _ in
-                let level = live && animate ? CGFloat(meterLevel()) : 0
-                ZStack {
-                    Circle().fill(Palette.brandWash.opacity(0.55)).scaleEffect(0.86 + 0.14 * level)
-                    Circle().fill(Palette.brandWash).scaleEffect(0.80 + 0.08 * level)
-                    Circle().stroke(live ? Palette.brand : Palette.placeholder, lineWidth: 3).scaleEffect(0.76)
-                    AvatarView(pose: pose, size: side * 0.72)
-                }
-                .frame(width: side, height: side)
-                .animation(animate ? .easeOut(duration: LevelTrail.interval) : nil, value: level)
+        if let heard = model.chat.lastHeard {
+            HStack(spacing: 6) {
+                Image(systemName: "ear").font(.caption)
+                Text(heard).font(.footnote).lineLimit(2)
             }
-            .frame(width: g.size.width, height: g.size.height)
+            .foregroundStyle(Palette.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.top, 10)
         }
-        .accessibilityHidden(true)
+        thermal(a)
+        Spacer(minLength: 12).layoutPriority(-2)
+    }
+
+    /// The way back from a seat taken elsewhere or a failure.
+    @ViewBuilder private func takeBack(_ a: AmbientSnapshot) -> some View {
+        if case .seatTaken = a.phase {
+            Button(String(localized: "在这台手机上听")) { AmbientController.shared.takeover() }
+                .buttonStyle(PrimaryButtonStyle()).frame(maxWidth: 220).padding(.top, 14)
+        } else if a.phase == .deaf || model.ambientFailed {
+            Button(String(localized: "重新打开")) { AmbientController.shared.reopen() }
+                .buttonStyle(PrimaryButtonStyle()).frame(maxWidth: 220).padding(.top, 14)
+        }
+    }
+
+    @ViewBuilder private func thermal(_ a: AmbientSnapshot) -> some View {
+        if a.thermalWarning {
+            Text(String(localized: "手机有点热，环境模式会更耗电")).font(.caption).foregroundStyle(Palette.attention).padding(.top, 8)
+        }
     }
 }
 

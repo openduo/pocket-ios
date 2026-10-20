@@ -242,7 +242,7 @@ struct DeviceDrawing: View {
                                     .foregroundStyle(Color(uiColor: UIColor(hex: 0x1FD9DE)))
                             }
                         } else {
-                            Image("avatar-listening").resizable().scaledToFit().padding(w * 0.12)
+                            LogoMark(mood: .idle).padding(w * 0.04)
                                 .environment(\.colorScheme, .dark)
                         }
                     }

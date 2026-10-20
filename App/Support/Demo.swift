@@ -149,6 +149,7 @@ enum Demo {
         args["channel.room"] = "study"
         args["channel.roomName"] = L("书房", "Study")
         args["channel.device"] = "demo"
+        if screen == "sessions" { args["channel.scope"] = DeviceScope.notify.rawValue }
         d.setVolatileDomain(args, forName: UserDefaults.argumentDomain)
         m.settings = ChannelSettings.load()
         m.persistComposerMode = false
@@ -274,7 +275,7 @@ enum Demo {
                        DraftChip(name: "IMG_2.jpg", mime: "image/jpeg", size: 1, thumbnail: swatch(.systemGreen), data: Data()),
                        DraftChip(name: L("报价.pdf", "quote.pdf"), mime: "application/pdf", size: 1, thumbnail: nil, data: Data(),
                                  state: .failed(UploadPolicy.limitText(10 * 1_048_576)))]
-        case "ambient-call", "ambient-chat":
+        case "ambient-call", "ambient-chat", "sessions":
             entries.append(ImlogEntry(at: at(0, 18, 30), kind: "typed", text: L("今晚吃什么好", "What should we have for dinner?"), utt_id: "b1"))
             entries.append(ImlogEntry(at: at(0, 18, 31), speaker: "多多", kind: "answer", text: L("冰箱里还有上周买的牛腩和土豆，可以做个土豆炖牛腩，一个小时左右。", "There's beef and potatoes in the fridge from last week. A beef and potato stew takes about an hour.")))
             for (i, l) in [("V1", L("多多，帮我想想周末带孩子去哪", "DuoDuo, where should we take the kids this weekend?")), ("V2", L("别太远，开车一小时以内", "Not too far, under an hour's drive")), ("V1", L("最好有草坪", "Somewhere with grass")), ("V2", L("带上野餐垫", "Bring the picnic blanket")), ("V1", L("那就这么定", "Let's do that"))].enumerated() {
@@ -429,6 +430,26 @@ enum Demo {
                 turn.handle(frame: ["type": "turn", "phase": "tool", "label": name + " ✓"])
             }
         }
+    }
+
+    /// `-PocketDemo sessions`: answers the session viewer's watch frames with a fixed list and,
+    /// for an opened session, a few rows. No channel.
+    @MainActor
+    static func answer(_ frame: [String: Any], to viewer: SessionViewer) {
+        guard frame["type"] as? String == "sessions_watch" else { return }
+        let list: [[String: Any]] = [
+            ["key": "feishu:main", "name": "main", "group": "chat", "status": "idle", "tools": [], "last_event_at": at(0, 9, 12), "notify": true],
+            ["key": "feishu:ops", "name": "ops", "group": "chat", "status": "idle", "tools": [], "last_event_at": at(1, 17, 40), "notify": true],
+            ["key": "job:daily", "name": L("日报", "Daily report"), "group": "job", "status": "running", "tools": [], "last_event_at": at(0, 6, 12)],
+        ]
+        viewer.frame(["type": "sessions", "sessions": list])
+        guard let key = frame["open"] as? String else { return }
+        let rows: [[String: Any]] = [
+            ["id": "r1", "at": at(0, 9, 10), "kind": "message", "text": L("这周的周报先列个提纲，下午三点前给我。", "Outline this week's report by 3 pm.")],
+            ["id": "r2", "at": at(0, 9, 11), "kind": "tool", "label": "Read", "input_summary": L("周报模板.md", "report-template.md")],
+            ["id": "r3", "at": at(0, 9, 12), "kind": "reply", "text": L("提纲：一、发布会进度；二、场地合同；三、嘉宾名单。", "Outline: 1. launch progress; 2. venue contract; 3. guest list.")],
+        ]
+        viewer.frame(["type": "session_rows", "key": key, "rows": rows, "initial": true])
     }
 
     @MainActor
