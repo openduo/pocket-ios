@@ -52,6 +52,8 @@ duoduo identity, iOS conventions. Values come from the ambient tokens
 
 - Motion: the mark is drawn every frame; the level it follows is eased between audio blocks.
   Reduce Motion draws it still; the halo keeps its colour, so the state still reads.
+  On battery (unplugged, or state unknown) `idle` and `unavailable` are one still frame with no
+  frame timer; plugged in, and in every other mood, the mark moves (`MarkMood.animates`).
 - Haptics: recording started (light impact, when the microphone input starts capturing, not at
   the touch),
   the finger crossing the hold button's edge either way (selection), send (notification

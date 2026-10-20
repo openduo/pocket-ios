@@ -1,27 +1,18 @@
 // Copyright 2026 openduo
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 
+import PocketCore
 import SwiftUI
 
 /// The 多多 mark as 多多's live state. Motion says what it is doing (the coat dozes, cocks its
 /// head to listen, its voice bars move to think and speak); a halo behind it says the same in
 /// colour, readable from across a room. Listening follows the microphone and speaking aloud
-/// follows the playback. Under Reduce Motion the mark is still and the halo keeps its colour.
+/// follows the playback. Under Reduce Motion the mark is still and the halo keeps its colour. On
+/// battery a resting mood (idle, unavailable) is one still frame with no frame timer; on external
+/// power it moves as in every other mood.
 struct LogoMark: View {
-    enum Mood: Equatable {
-        /// Online, nothing going on.
-        case idle
-        /// Ambient mode listening to the room.
-        case listening
-        /// The user is talking to it (hold to talk).
-        case hearing
-        /// Received, thinking, or running a tool.
-        case thinking
-        /// Answering: `aloud` when the answer is playing, else the text is streaming.
-        case speaking(aloud: Bool)
-        /// Offline, not set up, deaf or paused.
-        case unavailable
-    }
+    /// The moods and their motion rule live in PocketCore, where they are tested.
+    typealias Mood = MarkMood
 
     var mood: Mood
     @Environment(\.colorScheme) private var scheme
@@ -29,7 +20,7 @@ struct LogoMark: View {
     @State private var level = Follower()
 
     var body: some View {
-        if reduceMotion {
+        if reduceMotion || !mood.animates(on: BatteryPower.shared.source) {
             Drawing(mood: mood, t: 0, level: 0, dark: scheme == .dark)
         } else {
             TimelineView(.animation) { tl in
@@ -154,6 +145,37 @@ struct LogoMark: View {
             case .speaking(aloud: true): (pink, (0.45 + 0.55 * lv))
             case .speaking(aloud: false): (pink, (0.65 + 0.15 * sin(t * 3)))
             }
+        }
+    }
+}
+
+/// The phone's power source, live, for the mark. Battery monitoring is switched on once, when the
+/// first mark reads this; iOS then posts a notification on each state change, with no polling.
+@MainActor @Observable
+final class BatteryPower {
+    static let shared = BatteryPower()
+
+    private(set) var source: PowerSource
+
+    private init() {
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        source = Self.read()
+        NotificationCenter.default.addObserver(forName: UIDevice.batteryStateDidChangeNotification,
+                                               object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let now = Self.read()
+                if now != self.source { self.source = now }
+            }
+        }
+    }
+
+    private static func read() -> PowerSource {
+        switch UIDevice.current.batteryState {
+        case .charging, .full: .external
+        // Unknown counts as battery: when iOS cannot say, the cheaper choice is the still mark.
+        case .unplugged, .unknown: .battery
+        @unknown default: .battery
         }
     }
 }

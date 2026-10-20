@@ -50,6 +50,7 @@ probes on an iPhone XS Max and the Passport during development.
 | `LogoMark` margin | 0.7 of the frame | display | the outer ring of the frame is left to the halo |
 | `LogoMark` halo | strength 0.35–1 by mood and level; 0.95 / 0.5 / 0 opacity at 0.6 / 0.78 / 1 of the radius | display, **no data** | strongest at the coat's edge; tuned by hand on the simulator in both appearances (docs/design/native-app.md §2) |
 | `LogoMark` level ease | 80 ms time constant | display, **no data** | audio levels arrive in 100 ms blocks; the ease keeps the halo from stepping |
+| `LogoMark` frame timer | display refresh while animating; none for `idle` / `unavailable` on battery | display, **user decision** | energy: a resting mark draws one still frame unless the phone is charging or full; `UIDevice.batteryState` unknown counts as battery (`MarkMood.animates`) |
 | Output level | mixer output RMS, same scale and attack/decay as the mic level | derived | one meter scale for listening and speaking |
 | `TryChannel.stepDelay` | 0.9 s | display, **no data** | try-it mode only: spaces the scripted thinking and tool frames so the steps can be read; a real turn's timing comes from the brain |
 | Image viewer max zoom | image pixels ÷ fitted screen pixels (≥ 1) | derived | one image pixel per screen pixel; further zoom shows no more detail |
