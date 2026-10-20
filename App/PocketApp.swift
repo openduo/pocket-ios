@@ -31,27 +31,27 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     }
 }
 
-/// Whether this iPhone has a hinge, learnt from the first hinge update and remembered for later
-/// launches. Only a foldable gets the landscape layouts (docs/design/iphone-duo.md).
+/// Whether this iPhone folds. Only a foldable gets the landscape layouts (docs/design/iphone-duo.md).
 ///
-/// Remembering it lets a launch in landscape (the tent) start landscape. Learnt only at launch, the
-/// window starts portrait and turns when the hinge reports; anything presented before that turn
-/// (the call view, a sheet) holds the window portrait inside the landscape screen, drawn a quarter
-/// turn off, until it is dismissed.
+/// Known from the first frame by the screen's shape, so a launch in landscape (the tent) starts
+/// landscape: a window that starts portrait and turns later stays portrait, drawn a quarter turn
+/// off, under anything presented before the turn (the call view, a sheet). A hinge update confirms
+/// it for a foldable whose screens this check does not recognise.
 @MainActor
 enum Foldable {
-    /// Holds this device's vendor identifier: a backup restored to another iPhone carries the
-    /// defaults but not the identifier, so that iPhone starts portrait-only again.
-    private static let key = "foldable.vendorID"
-    private(set) static var present: Bool = {
-        guard let id = UIDevice.current.identifierForVendor?.uuidString else { return false }
-        return UserDefaults.standard.string(forKey: key) == id
+    private static var hingeSeen = false
+    /// Both displays of a foldable are far squarer than any iPhone that does not fold: the squarest
+    /// of those is the 16:9 iPhone SE (1334 x 750 px), and the foldable's are about 1.45:1.
+    private static let screenFolds: Bool = {
+        let size = UIScreen.main.nativeBounds.size
+        return max(size.width, size.height) / min(size.width, size.height) < 16.0 / 9.0
     }()
+
+    static var present: Bool { screenFolds || hingeSeen }
 
     static func found() {
         guard !present else { return }
-        present = true
-        if let id = UIDevice.current.identifierForVendor?.uuidString { UserDefaults.standard.set(id, forKey: key) }
+        hingeSeen = true
         for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
             scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
         }
