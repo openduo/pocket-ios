@@ -102,7 +102,14 @@ private struct StackedScreen: View {
                         RoomHandle(collapsed: $collapsed, drag: $drag)
                         RoomControls().padding(.bottom, 4)
                     }
-                    ThreadColumn(sheet: $sheet).clipped()
+                    // With the room above it, the same fold treatment as tabletop: a hairline,
+                    // and rows scroll out softly under it instead of being cut at the controls.
+                    ThreadColumn(sheet: $sheet)
+                        .safeAreaBar(edge: .top, spacing: 0) {
+                            if on { Rectangle().fill(Palette.hairline).frame(height: 0.5) }
+                        }
+                        .scrollEdgeEffectStyle(on ? .soft : .automatic, for: .top)
+                        .clipped()
                     if open {
                         Color.clear.frame(height: gap)
                         // The vertical bar has no title to name the session, so the pane does.
