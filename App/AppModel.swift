@@ -244,35 +244,37 @@ final class AppModel: ObservableObject {
 
     var voiceAvailable: Bool { chat.room?.cerebellumOK != false && chat.room?.uploadsDisabled != true }
 
-    /// Nav subtitle, and the pose for the empty state and the ambient view (design §2 table).
-    var presence: (pose: Pose, subtitle: String, live: Bool) {
-        if !settings.isComplete { return (.offline, String(localized: "还没有设置"), false) }
-        if needsPairing, !trying { return (.offline, String(localized: "需要重新配对"), false) }
-        if chat.connection == .offline { return (.offline, String(localized: "连不上 · 正在重试"), false) }
-        if holding { return (.heard, String(localized: "在听你说"), true) }
+    /// Nav subtitle, and the mark's mood for the empty state, the ambient view and the room.
+    var presence: (mood: LogoMark.Mood, subtitle: String, live: Bool) {
+        if !settings.isComplete { return (.unavailable, String(localized: "还没有设置"), false) }
+        if needsPairing, !trying { return (.unavailable, String(localized: "需要重新配对"), false) }
+        if chat.connection == .offline { return (.unavailable, String(localized: "连不上 · 正在重试"), false) }
+        if holding { return (.hearing, String(localized: "在听你说"), true) }
+        // An earlier answer still playing outranks the new turn's phase in the mark.
+        let aloud = ambient.isOn && ambient.speaking
         if let w = chat.working {
             switch w.phase {
-            case .received: return (.received, String(localized: "收到了"), true)
-            case .thinking: return (.thinking, String(localized: "在想…"), true)
+            case .received: return (aloud ? .speaking(aloud: true) : .thinking, String(localized: "收到了"), true)
+            case .thinking: return (aloud ? .speaking(aloud: true) : .thinking, String(localized: "在想…"), true)
             // The phase only: the step line lives in the thread's working card (design §4.4). A
             // long subtitle widens the bar's centre item and pushes 多多 off centre.
-            case .tool: return (.tool, String(localized: "在查"), true)
-            case .streaming: return (.generating, String(localized: "正在回复"), true)
+            case .tool: return (aloud ? .speaking(aloud: true) : .thinking, String(localized: "在查"), true)
+            case .streaming: return (.speaking(aloud: aloud), String(localized: "正在回复"), true)
             }
         }
         if ambient.isOn {
             switch ambient.phase {
-            case .deaf, .seatTaken, .failed: return (.deaf, String(localized: "环境模式 · 听不到了"), false)
-            case .interrupted: return (.sensesoff, String(localized: "环境模式 · 已暂停"), false)
+            case .deaf, .seatTaken, .failed: return (.unavailable, String(localized: "环境模式 · 听不到了"), false)
+            case .interrupted: return (.unavailable, String(localized: "环境模式 · 已暂停"), false)
             case .starting: return (.listening, String(localized: "环境模式 · 正在打开"), true)
             default:
-                if ambient.speaking { return (.tts, String(localized: "环境模式 · 正在说"), true) }
+                if ambient.speaking { return (.speaking(aloud: true), String(localized: "环境模式 · 正在说"), true) }
                 if ambient.silent { return (.listening, String(localized: "环境模式 · 在听 · 静音"), true) }
                 return (.listening, String(localized: "环境模式 · 在听"), true)
             }
         }
-        if chat.connection == .connecting { return (.listening, String(localized: "连接中…"), false) }
-        return (.listening, String(localized: "在线"), true)
+        if chat.connection == .connecting { return (.idle, String(localized: "连接中…"), false) }
+        return (.idle, String(localized: "在线"), true)
     }
 
     // MARK: composer
@@ -422,7 +424,16 @@ final class AppModel: ObservableObject {
 
     // MARK: ambient
 
-    func toggleAmbient() {
+    /// `expand` opens the full-screen call view; layouts that draw the room inline pass false.
+    /// The ambient button: on and expandable opens the call view; otherwise it toggles, or says
+    /// why voice is unavailable.
+    func ambientTapped(expand: Bool) {
+        if ambient.isOn, expand { ambientExpanded = true } else if ambient.isOn || voiceAvailable { toggleAmbient(expand: expand) } else {
+            toast = voiceUnavailableText
+        }
+    }
+
+    func toggleAmbient(expand: Bool = true) {
         if ambient.isOn {
             AmbientController.shared.turnOff()
             return
@@ -433,7 +444,7 @@ final class AppModel: ObservableObject {
                 return
             }
             AmbientController.shared.turnOn()
-            ambientExpanded = true
+            if expand { ambientExpanded = true }
         }
     }
 }
@@ -444,4 +455,12 @@ func meterLevel() -> Float {
     if Demo.active { return Demo.level(Date()) }
     #endif
     return VoiceIO.shared.level
+}
+
+/// Level of what is playing, on the same scale, for the mark while it speaks aloud.
+func playbackLevel() -> Float {
+    #if DEBUG
+    if Demo.active { return Demo.level(Date()) }
+    #endif
+    return VoiceIO.shared.outputLevel
 }

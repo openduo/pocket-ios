@@ -35,27 +35,23 @@ duoduo identity, iOS conventions. Values come from the ambient tokens
 - Type: SF Pro + PingFang SC (system font), Dynamic Type text styles. Bubble text `.body` (17 pt).
 - Shapes: bubbles 19 pt continuous corners with a 6 pt tail corner; buttons are circles or 14 pt
   rounded rectangles. The web system is square (radius 0); this deviation is open question Q1.
-- Avatar: the duoduo dog poses (`channel-ambient/web/avatar/*-{paper,dark}.svg`), shipped as asset
-  catalog vectors. The dog appears only where it is the content: the empty state, onboarding, and
-  the ambient view (rings animate with listening and speaking). The nav bar carries 多多's live
-  state as text (the subtitle); a decorative avatar there cost 12 pt of height and said nothing the
-  subtitle does not. No avatars beside bubbles. Pose and subtitle per state:
+- Live mark: the 多多 mark (`LogoMark`, the openduo.ai mark) in place of an avatar. It appears only
+  where it is the content: the empty state, onboarding, the ambient view and the iPhone Duo room.
+  The nav bar carries 多多's live state as text (the subtitle); no avatars beside bubbles. Motion
+  says what 多多 is doing and a halo behind the coat says it in colour, readable from across a room:
 
-| State | Pose | Nav subtitle |
-|---|---|---|
-| online, idle | `listening` | 在线 |
-| voice note uploading / ambient hears speech | `heard` | 在听你说 |
-| `turn received` | `received` | 收到了 |
-| `turn thinking` | `thinking` | 在想… |
-| `turn tool` | `tool` | 在查 (the step line stays in the working card, §4.4) |
-| `duoduo_said` streaming | `generating` | 正在回复 |
-| playback (ambient) | `tts` | 正在说 |
-| ambient 静音 (listening) | `listening` | 环境模式 · 在听 · 静音 |
-| ambient seat `unowned` / mic revoked | `deaf` | 听不到了 |
-| offline / connecting | `offline` | 连不上 · 正在重试 |
+| State | Mood | Mark | Halo | Nav subtitle |
+|---|---|---|---|---|
+| online, idle / connecting | `idle` | dozes, bars low | none | 在线 / 连接中… |
+| ambient listening (also 静音) | `listening` | head cocked | teal, follows the microphone | 环境模式 · 在听 |
+| hold to talk | `hearing` | head cocked further | teal, strong, follows the microphone | 在听你说 |
+| `turn received` / `thinking` / `tool` | `thinking` | bars ripple slowly | violet, slow pulse | 收到了 / 在想… / 在查 |
+| `duoduo_said` streaming | `speaking` | bars talk | pink, steady pulse | 正在回复 |
+| playback (ambient) | `speaking` aloud | bars follow the playback level | pink, follows the playback | 正在说 |
+| offline, not set up, unpaired, deaf, paused | `unavailable` | grey and still | none | 连不上 · 正在重试 … |
 
-- Motion: pose cross-fade 200 ms (empty state, ambient view); thinking dots pulse; level meter follows mic RMS. Reduce Motion
-  replaces all of it with static poses and text.
+- Motion: the mark is drawn every frame; the level it follows is eased between audio blocks.
+  Reduce Motion draws it still; the halo keeps its colour, so the state still reads.
 - Haptics: recording started (light impact, when the microphone input starts capturing, not at
   the touch),
   the finger crossing the hold button's edge either way (selection), send (notification
@@ -98,7 +94,7 @@ No room switching, no room list, no room preview. The room is a setting.
 
 | Step | Content | Exit |
 |---|---|---|
-| 1 Tailscale | Dog (`offline` pose), "先连上你的网络", one line on why, node name `duoduo-pocket`. Button 登录 Tailscale opens `auth_url` from `TsbridgeStatus` in `ASWebAuthenticationSession`. While waiting: "已在浏览器打开登录页，完成后回到这里", polling `backend_state`. | `backend_state == Running` |
+| 1 Tailscale | The mark (`idle`), "先连上你的网络", one line on why, node name `duoduo-pocket`. Button 登录 Tailscale opens `auth_url` from `TsbridgeStatus` in `ASWebAuthenticationSession`. While waiting: "已在浏览器打开登录页，完成后回到这里", polling `backend_state`. | `backend_state == Running` |
 | 2 Find 多多 | Host, room; port + HTTPS collapsed under one row. Live checklist: Tailscale connected → `GET /healthz` 200 (latency shown) → `GET /api/state?room=` 200, `daemon_ok`, `cerebellum_ok`. A 400 with `rooms` offers the room names as suggestions. | all three checks pass; 稍后再说 allowed |
 | 3 Passport | Same as the pairing sheet (4.9). Skippable. | paired or skipped |
 
@@ -109,7 +105,7 @@ Bluetooth on step 3 or the first Passport action; Photos/Camera on first use.
 
 | State | Trigger | What the user sees |
 |---|---|---|
-| Empty | connected, history empty | Dog `listening`, "我在，随时说", three cards: hold to talk, ambient mode, add Passport (screens `empty`) |
+| Empty | connected, history empty | The mark (current mood), "我在，随时说", three cards: hold to talk, ambient mode, add Passport (screens `empty`) |
 | Connecting | launch, foreground, settings change | Cached thread at once; nav subtitle 连接中…; no banner for the first 2 s (Q9) |
 | Connected | `/live` socket open and `/api/state` 200 | Nav subtitle 在线 |
 | Offline | socket cannot be restored, request fails | Attention banner "连不上多多 · 显示 HH:MM 缓存的记录" + 重试; nav subtitle 连不上 · 正在重试; sends are queued (Q5) (screens `offline`) |
@@ -199,7 +195,14 @@ message delivered ──▶ working bubble "收到了"        (turn received, me
   draft is kept but neither shown nor sent while in hold-to-talk mode. While ambient mode is on the
   composer shows text input only (the toggle is hidden, the hold bar off): the room already hears
   the phone. The stored mode returns when ambient mode ends.
-- `+` menu: 照片 (PHPicker, multi-select), 拍照 (camera), 文件 (document picker).
+- `+` menu: 照片 (PHPicker, multi-select), 拍照 (camera), 文件 (document picker), 位置 (map).
+- 位置 opens a map on the current location (when-in-use permission; a denied permission leaves the
+  map draggable). The pin is the map's centre; dragging the map or a search (`MKLocalSearch` over
+  the visible region) moves it. 使用这个位置 inserts one line into the draft, so no wire field is
+  added: `📍 <name>，<address>（地图坐标：lat, lon）`, plus `，大致位置` when the user allowed only an
+  approximate fix and the pin is still on it. The coordinates are Apple Maps' own: GCJ-02 where
+  the map data is Chinese (mainland and Hong Kong, measured), WGS-84 elsewhere, with no reliable
+  signal for which, so they are labelled map coordinates rather than a datum.
 - Chips above the field: image thumbnails / file tiles, ✕ to remove, per-chip upload progress.
   Upload starts when the chip is added (not at send) so send is fast; cached by file identity.
 - Send = all chips uploaded (`POST /api/upload`) → `POST /api/messages {text, attachments}`
@@ -278,25 +281,26 @@ message delivered ──▶ working bubble "收到了"        (turn received, me
 
 Two presentations of one state:
 
-- Ambient view (full screen, opened when ambient turns on): big dog in the current pose with level
-  rings, phase title (在听 / 在想 / 在查 / 正在说), while a tool runs the current step line
+- Ambient view (full screen, opened when ambient turns on): the live mark, phase title (在听 / 在想 / 在查 / 正在说), while a tool runs the current step line
   (§4.4, subheadline, two lines at most), sub-line ("说话就能打断它" while speaking), live
   caption card of the current answer, last heard line, and four controls: 静音, 别说了 (only enabled
-  while speaking), 对话 (minimise), 关闭.
+  while speaking), 对话, 关闭. 对话 lays the conversation over the room (read only, no composer):
+  the mark moves to the top, the thread takes the middle, the controls shrink; it reads 隐藏对话 while
+  shown and is remembered across openings. ⌄ minimises to the pill.
 - Ambient pill (minimised, in the conversation): teal pill under the nav bar with the level meter,
   phase, route ("扬声器 · 回声消除已开"), 别说了 and ⏻. Tap expands to the ambient view.
 
 | Ambient sub-state | Source | Display |
 |---|---|---|
 | Starting | engine starting, socket opening | "正在打开麦克风…" |
-| Listening | `role: master`, `meta.state: listening`, uplink live | 在听, level rings follow RMS |
+| Listening | `role: master`, `meta.state: listening`, uplink live | 在听, the halo follows RMS |
 | Heard | `transcript` frame | heard line updates |
 | Thinking / tool | `turn` frames | 在想 / 在查, step line below (§4.4) |
 | Speaking | local playback of a `c-` speech | 正在说, caption grows with `duoduo_said` |
 | Filler | local playback of an `s` speech | 正在说, no caption |
 | 静音 | user tapped 静音 | 在听; "已静音：还在听，回复只显示在屏幕上" |
 | Seat taken | `role: peer` (another edge in the same room) | "另一台设备在听" + 在这台手机上听 (re-hello) |
-| Deaf | `meta.state: unowned` while on, or mic revoked | `deaf` pose, "听不到了" + 重新打开 |
+| Deaf | `meta.state: unowned` while on, or mic revoked | `unavailable` mark, "听不到了" + 重新打开 |
 | Interrupted | `AVAudioSession` interruption | "来电，已暂停" ; resumes when the system says it may |
 | Off | user, or app left foreground (Q3) | pill disappears; answers are text only |
 
@@ -358,7 +362,7 @@ tsnet log + Passport log as one share sheet), version.
 - Nav bar centre: the centre item is as wide as 多多 alone, so UIKit always centres it; the
   subtitle is drawn under it, centred, truncated to the width that clears the side items.
 - Contrast: brand on paper 5.2:1, text ramps ≥ 4.5:1 for body; colour is never the only signal.
-- Reduce Motion: static poses, no ring animation; Reduce Transparency: opaque bars.
+- Reduce Motion: a still mark that keeps its halo colour; Reduce Transparency: opaque bars.
 
 ## 6. Endpoint map
 

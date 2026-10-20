@@ -110,7 +110,7 @@ See `SECURITY.md`. The app talks only to a channel on your own tailnet.
 
 ## License
 
-The code, including the 多多 avatar artwork, is FSL-1.1-Apache-2.0 (see `LICENSE`). The app icon,
+The code is FSL-1.1-Apache-2.0 (see `LICENSE`). The app icon,
 the 多多 / DuoDuo and OpenDuo names and the design mockups are OpenDuo brand assets with no open
 licence; forks must replace them (see `NOTICE`). Bundled third-party code (libopus, Tailscale's
 tsnet and its Go dependencies) keeps its own licences; see `THIRD_PARTY_NOTICES.md`.

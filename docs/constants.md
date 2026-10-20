@@ -44,8 +44,16 @@ probes on an iPhone XS Max and the Passport during development.
 | tsnet status timeout | 2 s | fixed (Go), **no data** | an in-process local-API call; bounds a status read for the UI only |
 | `ChannelSettings.defaultPort` / HTTPS default | 443 / on | default setting | `tailscale serve` publishes HTTPS on 443 |
 | Session drawer width | 82 % of the screen, at most 340 pt | display | the room behind stays visible as the way back |
+| `SessionDrawer.foldAfter` | 5 rows per group | display, **user decision** | the session list folds each group after this many rows behind 「更多」 so both groups stay in view; set by the user, not measured |
+| `SessionThreadView.swipeToClose` / `pullToClose` | 160 pt predicted / 90 pt past the top | display, **no data** | iPhone Duo session pane: a swipe toward the edge the pane leaves by closes it; tuned by hand on the iPhone Duo simulator (docs/design/iphone-duo.md) |
+| Room fold handle | 60 pt drag; the room never shorter than 120 pt | display, **no data** | iPhone Duo open flat in portrait: folds the room into its band; tuned by hand as above |
+| `LogoMark` margin | 0.7 of the frame | display | the outer ring of the frame is left to the halo |
+| `LogoMark` halo | strength 0.35–1 by mood and level; 0.95 / 0.5 / 0 opacity at 0.6 / 0.78 / 1 of the radius | display, **no data** | strongest at the coat's edge; tuned by hand on the simulator in both appearances (docs/design/native-app.md §2) |
+| `LogoMark` level ease | 80 ms time constant | display, **no data** | audio levels arrive in 100 ms blocks; the ease keeps the halo from stepping |
+| Output level | mixer output RMS, same scale and attack/decay as the mic level | derived | one meter scale for listening and speaking |
 | `TryChannel.stepDelay` | 0.9 s | display, **no data** | try-it mode only: spaces the scripted thinking and tool frames so the steps can be read; a real turn's timing comes from the brain |
 | Image viewer max zoom | image pixels ÷ fitted screen pixels (≥ 1) | derived | one image pixel per screen pixel; further zoom shows no more detail |
+| Location coordinates | 5 decimals | display | about a metre; the inserted line is read by 多多, not used for navigation |
 | Quote length | none | — | `<user-quote>` carries the whole quoted message; the bubble draws three lines of it |
 
 ## Native app (design `docs/design/native-app.md`)
