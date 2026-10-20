@@ -54,7 +54,8 @@ struct AmbientSnapshot: Equatable {
 ///
 /// Lifecycle (decision Q3): started by the user in the foreground, continues in the background
 /// and while locked through the `audio` background mode, ended by the user. Interruptions pause
-/// it and resume when the system allows.
+/// it; it resumes when the system says so, or else when the app is next in front
+/// (`AmbientInterruption`).
 final class AmbientController: @unchecked Sendable {
     static let shared = AmbientController()
 
@@ -86,7 +87,9 @@ final class AmbientController: @unchecked Sendable {
     private var surfaceSent: Surface?
     /// 静音 for this ambient session; a new session starts audible.
     private var silent = false
-    private var interrupted = false
+    private var interruption = AmbientInterruption()
+    /// The audio session is interrupted: capture is stopped until the resume.
+    private var interrupted: Bool { interruption.active }
     private var failure: String?
 
     private let snapLock = NSLock()
@@ -134,7 +137,8 @@ final class AmbientController: @unchecked Sendable {
             tuning = PocketTuning.load()
             on = true
             setSilentOnQueue(false)
-            interrupted = false
+            interruption.clear()
+            AmbientNotice.withdraw()
             failure = nil
             // The ambient engine replaces the playback-only one: a read in progress ends here.
             stopRead()
@@ -166,7 +170,8 @@ final class AmbientController: @unchecked Sendable {
             on = false
             // Interruptions are tracked while ambient runs only; the reopened connection asks
             // for the setting again.
-            interrupted = false
+            interruption.clear()
+            AmbientNotice.withdraw()
             AppLog.shared.log("ambient_off")
             // The channel's mic switch is a room control that outlives this socket: do not leave
             // the room's mic off for the next edge (`on` = mic on).
@@ -206,7 +211,8 @@ final class AmbientController: @unchecked Sendable {
         queue.async { [self] in
             guard on else { return }
             failure = nil
-            interrupted = false
+            interruption.clear()
+            AmbientNotice.withdraw()
             stopAll()
             newEdge()
             startAudio()
@@ -363,26 +369,45 @@ final class AmbientController: @unchecked Sendable {
         guard on else { return }
         switch type {
         case .began:
-            interrupted = true
+            interruption.began()
             AppLog.shared.log("ambient_interrupted")
             stopAll()
         case .ended:
             AppLog.shared.log("ambient_interruption_ended", ["resume": resume])
-            guard interrupted, resume else { break }
-            interrupted = false
-            // The connection opened during the interruption asked `audio=0`: replace it before
-            // the new edge says `hello` on it.
-            if liveAudio != nil, liveAudio != wantsAudio {
-                liveReplaced()
-                live.close()
+            switch interruption.ended(shouldResume: resume, appActive: AppPhase.isActive) {
+            case .resume: resumeAfterInterruption()
+            case .notify: AmbientNotice.post()
+            case nil: break
             }
-            newEdge()
-            startAudio()
-            PocketEngine.shared.ensureLive("ambient_resume")
         default:
             break
         }
         publish()
+    }
+
+    /// The app came to the front: ambient mode left paused by an interruption that ended without
+    /// `shouldResume` starts again (also after a tap on the notice).
+    func appBecameActive() {
+        queue.async { [self] in
+            guard on, interruption.becameActive() == .resume else { return }
+            AppLog.shared.log("ambient_resumed_on_foreground")
+            resumeAfterInterruption()
+            publish()
+        }
+    }
+
+    private func resumeAfterInterruption() {
+        interruption.clear()
+        AmbientNotice.withdraw()
+        // The connection opened during the interruption asked `audio=0`: replace it before
+        // the new edge says `hello` on it.
+        if liveAudio != nil, liveAudio != wantsAudio {
+            liveReplaced()
+            live.close()
+        }
+        newEdge()
+        startAudio()
+        PocketEngine.shared.ensureLive("ambient_resume")
     }
 
     private func uplink(_ packet: Data) {

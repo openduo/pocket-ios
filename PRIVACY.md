@@ -36,6 +36,8 @@ when you exit.
   service and keeps only that name, its area and the arrival time. Turning the setting off stops
   it and deletes the stored places.
 - Local network: the Tailscale node looks for a direct path to your own devices.
+- Notifications, asked when you first turn on ambient mode: one local notice when a call or other
+  audio stopped ambient mode while the app was in the background. Nothing is sent anywhere.
 
 ## Your server
 
@@ -79,6 +81,7 @@ App 没有统计、广告、追踪和崩溃上报，也没有 OpenDuo 账号。�
 - 使用 App 期间的定位：在对话中发送位置时把地图移到你所在的地方。
 - 始终定位：只用于「让多多知道我到了哪」（默认关闭）。iOS 在你到达某处并停留时通知 App；手机用 Apple 的地图服务把这个位置换成地名，只保存地名、所在区域和到达时间。关闭这个设置会停止使用定位并删除保存的地点。
 - 本地网络：Tailscale 节点寻找到你自己设备的直连路径。
+- 通知：第一次打开环境模式时请求。只在 App 处于后台、来电或其他声音中断了环境模式时，在手机上显示一条本地通知，不发送任何数据。
 
 ## 你的服务器
 

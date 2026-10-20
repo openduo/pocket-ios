@@ -3744,6 +3744,26 @@
           }
         }
       }
+    },
+    "环境模式被打断了": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ambient mode was interrupted"
+          }
+        }
+      }
+    },
+    "点这里回到多多，继续听房间里的声音。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap to go back to DuoDuo and keep listening to the room."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

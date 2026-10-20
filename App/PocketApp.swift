@@ -94,6 +94,7 @@ struct PocketApp: App {
             AppLog.shared.log("scene_phase", ["phase": name])
             model.setActive(p == .active)
             if p == .active { PocketEngine.shared.appBecameActive() }
+            if p == .active { AmbientController.shared.appBecameActive() }
             // Also when the extension could not open the app and the user did.
             if p == .active { model.importShares() }
             if p == .active || p == .background { AmbientController.shared.audioWantChanged(name) }
