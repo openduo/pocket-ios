@@ -538,8 +538,10 @@ struct WorkingBubble: View {
 
 struct ThinkingDots: View {
     var animate: Bool
+    @Environment(\.scenePhase) private var scene
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.25, paused: !animate)) { ctx in
+        // Paused off screen too: ambient keeps the app running behind the lock screen.
+        TimelineView(.animation(minimumInterval: 0.25, paused: !animate || scene != .active)) { ctx in
             let step = animate ? Int(ctx.date.timeIntervalSinceReferenceDate * 4) % 3 : 2
             HStack(spacing: 3) {
                 ForEach(0..<3) { i in

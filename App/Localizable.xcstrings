@@ -3764,6 +3764,56 @@
           }
         }
       }
+    },
+    "环境模式 · 连不上，已停止收音": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ambient · can't connect, mic stopped"
+          }
+        }
+      }
+    },
+    "连不上": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can't connect"
+          }
+        }
+      }
+    },
+    "连不上房间，已停止收音；连上后打开 App 会接着听": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can't reach the room, so the mic is stopped. Once connected, it listens again when the app is open"
+          }
+        }
+      }
+    },
+    "记录网络日志": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record network log"
+          }
+        }
+      }
+    },
+    "排查连接问题时打开，导出日志会带上它。平时关着更省电。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn on to troubleshoot connections; exported logs include it. Leaving it off saves battery."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

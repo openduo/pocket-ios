@@ -14,6 +14,7 @@ struct SettingsView: View {
     @AppStorage(AudioPreferences.headsetMicKey) private var headsetMic = false
     @AppStorage(AudioPreferences.speakRepliesKey) private var speakReplies = false
     @AppStorage(AudioPreferences.keepAwakeKey) private var keepAwake = false
+    @AppStorage(Tailnet.networkLogKey) private var networkLog = false
 
     var body: some View {
         NavigationStack {
@@ -85,7 +86,10 @@ struct SettingsView: View {
                         .frame(maxWidth: 200)
                     }
                 }
-                Section(String(localized: "诊断")) {
+                Section {
+                    Toggle(isOn: Binding(get: { networkLog }, set: { networkLog = $0; Tailnet.shared.setNetworkLog($0) })) {
+                        label("network", Palette.secondary, String(localized: "记录网络日志"))
+                    }
                     ShareLink(items: AppLog.shared.exportFiles(extra: [Tailnet.shared.tsnetLog].compactMap { $0 })) {
                         row("tray.and.arrow.up", Palette.secondary, String(localized: "导出日志"), "")
                     }
@@ -97,6 +101,10 @@ struct SettingsView: View {
                             ForEach(issues, id: \.self) { Text($0).font(.caption).foregroundStyle(Palette.secondary) }
                         }
                     }
+                } header: {
+                    Text(String(localized: "诊断"))
+                } footer: {
+                    Text(String(localized: "排查连接问题时打开，导出日志会带上它。平时关着更省电。"))
                 }
             }
             .scrollContentBackground(.hidden)

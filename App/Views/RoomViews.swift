@@ -19,6 +19,7 @@ extension AppModel {
         case .seatTaken: return String(localized: "另一台设备在听")
         case .deaf: return String(localized: "听不到了")
         case .interrupted: return String(localized: "已暂停")
+        case .offline: return String(localized: "连不上")
         case .failed: return String(localized: "出了问题")
         case .listening:
             if a.speaking { return String(localized: "正在说") }
@@ -45,6 +46,7 @@ extension AppModel {
         case .seatTaken: return String(localized: "同一个房间只能有一台设备在听")
         case .deaf: return String(localized: "房间没有收到声音")
         case .interrupted: return String(localized: "来电或其他声音占用了麦克风，结束后会接着听")
+        case .offline: return String(localized: "连不上房间，已停止收音；连上后打开 App 会接着听")
         case .failed(let why): return why
         case .starting: return a.route
         default:

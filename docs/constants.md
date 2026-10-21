@@ -51,7 +51,9 @@ probes on an iPhone XS Max and the Passport during development.
 | `LogoMark` margin | 0.7 of the frame | display | the outer ring of the frame is left to the halo |
 | `LogoMark` halo | strength 0.35–1 by mood and level; 0.95 / 0.5 / 0 opacity at 0.6 / 0.78 / 1 of the radius | display, **no data** | strongest at the coat's edge; tuned by hand on the simulator in both appearances (docs/design/native-app.md §2) |
 | `LogoMark` level ease | 80 ms time constant | display, **no data** | audio levels arrive in 100 ms blocks; the ease keeps the halo from stepping |
-| `LogoMark` frame timer | display refresh while animating; none for `idle` / `unavailable` on battery | display, **user decision** | energy: a resting mark draws one still frame unless the phone is charging or full; `UIDevice.batteryState` unknown counts as battery (`MarkMood.animates`) |
+| `LogoMark` frame timer | none for `idle` / `unavailable` on battery | display, **user decision** | energy: a resting mark draws one still frame unless the phone is charging or full; `UIDevice.batteryState` unknown counts as battery (`MarkMood.animates`) |
+| `LogoMark.frameInterval` | 1/30 s while animating | display, **no data** | the fastest motion (voice bars, 1.75 Hz) and the level (100 ms blocks) read smoothly at 30 fps; the display's own rate (120 Hz on ProMotion) is four times the work. To be checked by eye on the device |
+| Ambient pill meter | `LevelTrail.interval` while listening; no timer otherwise | display | the meter shows a level only while listening |
 | Output level | mixer output RMS, same scale and attack/decay as the mic level | derived | one meter scale for listening and speaking |
 | `TryChannel.stepDelay` | 0.9 s | display, **no data** | try-it mode only: spaces the scripted thinking and tool frames so the steps can be read; a real turn's timing comes from the brain |
 | Image viewer max zoom | image pixels ÷ fitted screen pixels (≥ 1) | derived | one image pixel per screen pixel; further zoom shows no more detail |
@@ -64,9 +66,11 @@ probes on an iPhone XS Max and the Passport during development.
 |---|---|---|---|
 | `AmbientEdge.playedReportMs` | 250 ms | fixed | the web edge's `PLAYED_REPORT_MS`; the watermark is also flushed when the playback queue drains; sent with ambient on only |
 | Read aloud request | no deadline | — | the tsnet bring-up is bounded by `connectTimeout`; the stream ends when synthesis completes, the body breaks, or the user's next action (a press, 别说了, a new read, a `speech` declaration, leaving the front) cancels it |
-| Playback-only engine lifetime | first scheduled block → last block played | derived | no idle timer; see `docs/design/native-app.md` §7.8 for the alternatives kept in the backlog |
+| Playback-only engine lifetime | first scheduled block → last block played | derived | no idle timer; see `docs/design/native-app.md` §7.10 for the alternatives kept in the backlog |
 | `AmbientEdge.rate` | 16 kHz | fixed | `docs/ble-protocol.md` §1; `audio_params.rate` is a notification, a different rate stops ambient |
-| `PocketEngine.redialDelay` | 1 s | fixed | the web edge's reconnect pause (`transport.js`), for the `/live` socket while the app is visible or ambient runs; each dial is bounded by `connectTimeout`; Q9 shows the offline banner after the first failed attempt, so no delay constant |
+| `RedialBackoff` (`/live` redial) | 1 s, doubling, at most 30 s | tuning, **user decision** | starts at the web edge's reconnect pause (`transport.js`); doubling keeps a long outage from costing a dial (and a tsnet wake) every second. A network path change, the app coming to the front and a press dial at once and reset it. Each dial is bounded by `connectTimeout`; Q9 shows the offline banner after the first failed attempt |
+| Ambient offline pause | when the backoff reaches its 30 s cap (about 31 s of failed dials) | derived, **user decision** | ambient mode stops the microphone until the connection is back with the app in front; encoding already stops the moment the socket closes. Shorter outages (a lift, a tunnel) keep the mic open so the room resumes without a new hello |
+| tsnet log file | off | default setting | Settings › 诊断 › 记录网络日志. On, Tailscale writes a line per probe and per path change (tens of MB on a phone without a UDP path); its verbose lines are dropped either way. Lines the patches mark `pocket:` always go to the app log |
 | `/live` socket write timeout | 5 s | fixed (Go) | one frame on a live tailnet path takes milliseconds; worst measured stall 2.1 s (iPhone XS Max). Writes run on their own queue, so a stalled write never blocks capture |
 | Tailscale logout timeout | 10 s | fixed (Go) | bounds the Settings action on a dead control plane; display only |
 | `ConversationStore.historyScanDays` | 14 days | fixed, **no data** | days probed backwards per "load earlier" before showing 「N 天没有记录 · 继续找」; each probe is one small `GET /api/imlog` |
@@ -75,7 +79,7 @@ probes on an iPhone XS Max and the Passport during development.
 | Cache retention | everything | — | decision Q13 |
 | `ThreadBuilder.separatorGap` | 10 min | display | design §4.3 |
 | `ThreadBuilder.heardRunVisible` | 3 rows | display | decision Q6: runs longer than 3 fold |
-| `AppModel.refreshSeconds` | 1 s | display | device and tailnet rows, the ambient view's clock and the Tailscale login poll, while visible; one in-process status call per tick |
+| `AppModel.refreshSeconds` | 1 s | display | device and tailnet rows and the Tailscale login poll, while visible; one in-process status call per tick, and views redraw only when a value changed. The ambient view's clock has its own once-a-minute timeline |
 | `LevelTrail.interval` / `count` | 50 ms / 48 samples | display | meters sample the mic level only while visible and active; per audio frame the engine only updates one number |
 | Meter attack/decay | ×6 gain, 0.82 / 0.18 | display | the web edge's meter (`capture.js`) |
 | `Composer.photoJPEGQuality` | 0.9 | fixed, **no data** | HEIC and camera photos become JPEG because the channel renders only PNG/JPEG/GIF/WebP inline; 0.9 is visually lossless for photos |

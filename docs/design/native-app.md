@@ -566,7 +566,43 @@ cerebellum, which decides and the channel sends `stop_audio{reason:"barge_in"}`.
 - Failures (toast): 422 这条没有能读的文字, 413 这条太长，读不了, 502 语音合成失败, 503 语音服务暂不可用,
   no response 连不上多多, a body cut after audio started 朗读中断了.
 
-### 7.8 Backlog: playback with ambient off
+### 7.8 Energy
+
+Measured over the cable with Instruments (Activity Monitor, Time Profiler) on an iPhone 17 Pro
+Max; the Power Profiler reads nothing while the phone charges, so CPU time and wakeups are the
+measures. Ambient off and idle, the app costs little. The costs found, and what the app does:
+
+- tsnet's link monitor cannot run in an app (its route socket fails with `ENOTCONN`) and retried
+  every second. A patch (`Bridge/tailscale-patches`) stops it on that error; the app reports path
+  changes (`NWPathMonitor`) and the return to the front as a rebind.
+- Without a UDP path (common on mobile networks), tsnet's periodic re-probe fell back to HTTPS
+  probes every 20–26 s while traffic flowed. A second patch skips the periodic probe while the
+  last one found no UDP path; a path change or rebind still probes. The pause and its end are
+  logged (`tsnet_event`, `pocket: periodic STUN paused/resumed`).
+- tsnet's log file grew by a line per probe; it is off by default (Settings › 诊断), and
+  Tailscale's upload of logs is disabled.
+- The UI redrew every second for a clock; the clock now has its own minute timeline. The mark
+  draws at 30 fps, the pill meter ticks only while listening.
+- The `/live` redial backs off (1 s doubling to 30 s). Ambient mode encodes only while the socket
+  is open, sends a capture block's packets in one bridge call, and stops the microphone when the
+  backoff reaches its cap (phase `offline`, 「连不上」); capture restarts when the connection is
+  back with the app in front.
+- A Passport saved earlier is waited for with a pending connect only; the radio scans only when
+  none is saved (or its bond is stale).
+
+### 7.9 Backlog: energy
+
+- Watch the periodic-probe pause in the field (`tsnet_event` lines): how often a phone has no UDP
+  path, and whether a path found later is picked up.
+- MetricKit reports (`MetricsLog`, exported with the logs) are temporary: remove them once the
+  step below is decided.
+- Step 2, silence suppression: stop sending while nobody speaks. Needs a wire change: a pause
+  message, the cerebellum filling the missing samples (its segmenter and diarizer count samples),
+  about 300 ms of pre-roll before speech and a tail past 600 ms of silence, and sending throughout
+  playback plus 3 s for barge-in. Decide after measuring step 1.
+- Not done: skipping the `GET /api/state` that follows a successful ping.
+
+### 7.10 Backlog: playback with ambient off
 
 The playback-only engine starts at the first block and stops when the queue empties, so a stall
 inside a streamed reply restarts it (a short gap; other audio unducks and ducks again). Two

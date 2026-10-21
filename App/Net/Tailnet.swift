@@ -24,6 +24,20 @@ final class Tailnet: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "pocket.tailnet")
     private var started = false
+    private let events = TailnetEvents()
+    private let path = NetworkPath()
+
+    /// Settings key: tsnet writes its log file (Settings › 诊断). Off by default: the file costs
+    /// a write per probe and grows without bound.
+    static let networkLogKey = "diagnostics.networkLog"
+    static var networkLog: Bool { UserDefaults.standard.bool(forKey: networkLogKey) }
+
+    /// Turns the tsnet log file on or off at once; off deletes it.
+    func setNetworkLog(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: Self.networkLogKey)
+        TsbridgeSetLogging(on)
+        AppLog.shared.log("tsnet_log", ["on": on])
+    }
 
     let stateDir: String = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -35,6 +49,8 @@ final class Tailnet: @unchecked Sendable {
         queue.async { [self] in
             guard !started else { return }
             let t0 = CPUClock.uptime()
+            TsbridgeSetLogging(Self.networkLog)
+            TsbridgeSetEventHandler(events)
             var err: NSError?
             TsbridgeStart(stateDir, Tailnet.hostname, &err)
             if let err {
@@ -43,6 +59,21 @@ final class Tailnet: @unchecked Sendable {
             }
             started = true
             AppLog.shared.log("tsnet_started", ["ms": Int((CPUClock.uptime() - t0) * 1000), "app": AppPhase.value])
+            // tsnet cannot watch the network itself on iOS (the patched link monitor stops), so
+            // the app tells it.
+            path.start { [weak self] in
+                self?.rebind()
+                PocketEngine.shared.networkChanged()
+            }
+        }
+    }
+
+    /// The network may have changed (path change, back in front): the node rebinds its sockets and
+    /// probes its paths again. Returns at once.
+    func rebind() {
+        queue.async { [self] in
+            guard started, !TryMode.active else { return }
+            TsbridgeRebind()
         }
     }
 
@@ -313,10 +344,18 @@ final class LiveSocket: NSObject, TsbridgeLiveHandlerProtocol, @unchecked Sendab
         sendQueue.async { var e: NSError?; TsbridgeLiveSendText(s, &e) }
     }
 
-    /// In try-it mode the microphone's packets go nowhere: nothing leaves the phone.
-    func send(packet: Data) {
-        if TryMode.active { return }
-        sendQueue.async { var e: NSError?; TsbridgeLiveSendBinary(packet, &e) }
+    /// Sends one capture block's packets, one frame each, in one bridge call. In try-it mode the
+    /// microphone's packets go nowhere: nothing leaves the phone.
+    func send(packets: [Data]) {
+        if TryMode.active || packets.isEmpty { return }
+        // Each packet behind its length as a big-endian UInt16 (`LiveSendBinaries`).
+        var framed = Data(capacity: packets.reduce(0) { $0 + 2 + $1.count })
+        for p in packets {
+            framed.append(UInt8(p.count >> 8))
+            framed.append(UInt8(p.count & 0xff))
+            framed.append(p)
+        }
+        sendQueue.async { var e: NSError?; TsbridgeLiveSendBinaries(framed, &e) }
     }
 
     func onLiveText(_ text: String?) { if let text { onText?(text) } }
@@ -345,5 +384,13 @@ final class Locked<Value>: @unchecked Sendable {
     func withLock<R>(_ f: (inout Value) -> R) -> R {
         lock.lock(); defer { lock.unlock() }
         return f(&value)
+    }
+}
+
+/// The tsnet lines the app always keeps (marked by the Tailscale patches), into the app log.
+private final class TailnetEvents: NSObject, TsbridgeEventHandlerProtocol {
+    func event(_ line: String?) {
+        guard let line else { return }
+        AppLog.shared.log("tsnet_event", ["line": line])
     }
 }

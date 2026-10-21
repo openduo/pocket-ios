@@ -38,12 +38,14 @@ final class AppLog: @unchecked Sendable {
         }
     }
 
-    /// Log files plus the tsnet log, newest last, for the share sheet.
+    /// Log files and MetricKit reports plus `extra` (the tsnet log when it is on), for the share
+    /// sheet.
     func exportFiles(extra: [URL]) -> [URL] {
         queue.sync { try? handle?.synchronize() }
         let fm = FileManager.default
         let files = ((try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
-            .filter { $0.pathExtension == "jsonl" }
+            // The event logs, and MetricKit's reports (`MetricsLog`).
+            .filter { $0.pathExtension == "jsonl" || $0.pathExtension == "json" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         return files + extra.filter { fm.fileExists(atPath: $0.path) }
     }
