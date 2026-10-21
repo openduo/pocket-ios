@@ -5,6 +5,7 @@ package tsbridge
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -159,6 +160,28 @@ func LiveSendText(text string) error { return liveWrite(websocket.MessageText, [
 
 // LiveSendBinary sends one binary frame (one Opus packet).
 func LiveSendBinary(data []byte) error { return liveWrite(websocket.MessageBinary, data) }
+
+// LiveSendBinaries sends several binary frames, one per packet, in one call
+// from the app: `framed` is each packet preceded by its length as a big-endian
+// uint16 (an Opus packet is at most 1275 bytes). It stops at the first failed
+// write.
+func LiveSendBinaries(framed []byte) error {
+	for len(framed) > 0 {
+		if len(framed) < 2 {
+			return errors.New("tsbridge: truncated packet length")
+		}
+		n := int(binary.BigEndian.Uint16(framed))
+		framed = framed[2:]
+		if n > len(framed) {
+			return errors.New("tsbridge: truncated packet")
+		}
+		if err := liveWrite(websocket.MessageBinary, framed[:n]); err != nil {
+			return err
+		}
+		framed = framed[n:]
+	}
+	return nil
+}
 
 // LiveIsOpen reports whether a socket is held. After a suspension it may be
 // stale; LivePing tells.

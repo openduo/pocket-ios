@@ -313,3 +313,47 @@ func TestLiveOpenBadHeaders(t *testing.T) {
 		t.Fatal("bad headers accepted")
 	}
 }
+
+func TestLiveSendBinariesSplitsFrames(t *testing.T) {
+	setupUpstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		for {
+			typ, data, err := c.Read(context.Background())
+			if err != nil {
+				return
+			}
+			if err := c.Write(context.Background(), typ, data); err != nil {
+				return
+			}
+		}
+	}))
+	h := &liveRecorder{}
+	SetLiveHandler(h)
+	t.Cleanup(func() { LiveClose(); SetLiveHandler(nil) })
+	if err := LiveOpen("/live?room=a", "", 2000); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]byte{{1, 2, 3}, {}, bytes.Repeat([]byte{9}, 300)}
+	var framed []byte
+	for _, p := range want {
+		framed = append(framed, byte(len(p)>>8), byte(len(p)))
+		framed = append(framed, p...)
+	}
+	if err := LiveSendBinaries(framed); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { _, b, _ := h.snapshot(); return len(b) == len(want) })
+	_, bins, _ := h.snapshot()
+	for i, b := range bins {
+		if !bytes.Equal(b, want[i]) {
+			t.Fatalf("binary %d = %v", i, b)
+		}
+	}
+	if err := LiveSendBinaries([]byte{0, 5, 1}); err == nil {
+		t.Fatal("truncated packet accepted")
+	}
+}
