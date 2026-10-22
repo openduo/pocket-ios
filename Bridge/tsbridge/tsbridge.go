@@ -316,10 +316,15 @@ func Rebind() {
 	if err != nil {
 		return
 	}
-	// An in-process local API call that only schedules the rebind: no deadline.
+	// As Tailscale's own reaction to a major link change: rebind the sockets,
+	// then probe the paths again. The probe also ends a periodic-probe pause
+	// (Bridge/tailscale-patches) when the new network has a UDP path.
+	// In-process local API calls that only schedule the work: no deadline.
 	go func() {
-		if err := lc.DebugAction(context.Background(), "rebind"); err != nil {
-			logf("pocket: rebind failed: %v", err)
+		for _, action := range []string{"rebind", "restun"} {
+			if err := lc.DebugAction(context.Background(), action); err != nil {
+				logf("pocket: %s failed: %v", action, err)
+			}
 		}
 	}()
 }

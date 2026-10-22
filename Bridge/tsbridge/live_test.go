@@ -343,9 +343,20 @@ func TestLiveSendBinariesSplitsFrames(t *testing.T) {
 		framed = append(framed, byte(len(p)>>8), byte(len(p)))
 		framed = append(framed, p...)
 	}
+	liveMu.Lock()
+	cork := liveCork
+	liveMu.Unlock()
+	cork.mu.Lock()
+	before := cork.writes
+	cork.mu.Unlock()
 	if err := LiveSendBinaries(framed); err != nil {
 		t.Fatal(err)
 	}
+	cork.mu.Lock()
+	if n := cork.writes - before; n != 1 {
+		t.Errorf("%d writes beneath for %d frames, want 1", n, len(want))
+	}
+	cork.mu.Unlock()
 	waitFor(t, func() bool { _, b, _ := h.snapshot(); return len(b) == len(want) })
 	_, bins, _ := h.snapshot()
 	for i, b := range bins {
