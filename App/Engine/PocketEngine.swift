@@ -54,6 +54,10 @@ final class PocketEngine: @unchecked Sendable {
     /// A check was asked for while one ran: run another when it ends, so a request made after
     /// the running check read its inputs is not lost.
     private var liveRecheck: String?
+    /// Pauses between failed `/live` attempts; `redialGeneration` drops a pending pause when a
+    /// dial starts sooner for another reason.
+    private var redial = RedialBackoff()
+    private var redialGeneration = 0
     /// The connection was opened with a cursor: rows before `ready` are its replay, and `ready`
     /// settles what the app still waits on.
     private var liveReplays = false
@@ -136,6 +140,7 @@ final class PocketEngine: @unchecked Sendable {
             // not readable when the target was set.
             if settings.isComplete, !Tailnet.shared.targetSnapshot().hasToken { Tailnet.shared.apply(settings) }
             Tailnet.shared.closeIdle()
+            redial.reset()
             ensureLiveOnQueue("foreground")
             link.retryStaleBond()
         }
@@ -150,6 +155,15 @@ final class PocketEngine: @unchecked Sendable {
         }
     }
 
+    /// The network path changed (`NetworkPath`): dial at once from the first pause while the
+    /// connection is wanted. tsnet itself was told to rebind.
+    func networkChanged() {
+        queue.async { [self] in
+            redial.reset()
+            if wantLive { ensureLiveOnQueue("network") }
+        }
+    }
+
     /// A request failed for lack of a connection: check the `/live` connection now.
     func connectionLost() {
         queue.async { [self] in ensureLiveOnQueue("request_failed") }
@@ -160,9 +174,6 @@ final class PocketEngine: @unchecked Sendable {
         queue.async { [self] in if wantLive { ensureLiveOnQueue(reason) } }
     }
 
-    /// Pause between `/live` attempts while the app is visible or ambient runs: the web edge's
-    /// 1 s (`transport.js`). Each attempt is itself bounded by `connectTimeout`.
-    static let redialDelay: TimeInterval = 1
 
     // MARK: device messages
 
@@ -593,9 +604,18 @@ final class PocketEngine: @unchecked Sendable {
                 AppLog.shared.log("live", ["reason": reason, "opened": opened, "err": failure ?? "",
                                            "ms": Int((CPUClock.uptime() - t0) * 1000), "app": AppPhase.value])
                 setReachable(failure == nil)
-                if failure != nil, AppPhase.isActive || AmbientController.shared.snapshot().isOn {
-                    // Checked again when the pause ends: the app may have left the foreground.
-                    queue.asyncAfter(deadline: .now() + Self.redialDelay) { [self] in
+                redialGeneration += 1
+                if failure == nil {
+                    redial.reset()
+                    AmbientController.shared.linkUp()
+                } else if AppPhase.isActive || AmbientController.shared.snapshot().isOn {
+                    // Pauses grow while the outage lasts (`RedialBackoff`); a path change or the
+                    // front starts again at once. Checked again when the pause ends: the app may
+                    // have left the foreground.
+                    let pause = redial.failed(), generation = redialGeneration
+                    if redial.sustained { AmbientController.shared.linkDown() }
+                    queue.asyncAfter(deadline: .now() + pause) { [self] in
+                        guard generation == redialGeneration else { return }
                         if AppPhase.isActive || AmbientController.shared.snapshot().isOn { ensureLiveOnQueue("retry") }
                     }
                 }

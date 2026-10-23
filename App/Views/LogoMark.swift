@@ -17,13 +17,20 @@ struct LogoMark: View {
     var mood: Mood
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Off screen (ambient keeps the app running behind the lock screen) the frame timer pauses.
+    @Environment(\.scenePhase) private var scene
     @State private var level = Follower()
+
+    /// The fastest motion (the voice bars, under 2 Hz) and the level (a block every 100 ms) read
+    /// smoothly at 30 frames a second; the display's own rate (up to 120 on ProMotion) spends
+    /// four times the work for nothing visible. Display only (docs/constants.md).
+    static let frameInterval: TimeInterval = 1.0 / 30
 
     var body: some View {
         if reduceMotion || !mood.animates(on: BatteryPower.shared.source) {
             Drawing(mood: mood, t: 0, level: 0, dark: scheme == .dark)
         } else {
-            TimelineView(.animation) { tl in
+            TimelineView(.animation(minimumInterval: Self.frameInterval, paused: scene != .active)) { tl in
                 let t = tl.date.timeIntervalSinceReferenceDate
                 Drawing(mood: mood, t: t, level: level.step(to: source(), at: t), dark: scheme == .dark)
             }

@@ -25,8 +25,11 @@ struct AmbientView: View {
                 Spacer()
                 VStack(spacing: 1) {
                     Text(String(localized: "多多")).font(.headline)
-                    Text(String(localized: "环境模式 · \(hm(model.now))"))
-                        .font(.footnote).foregroundStyle(Palette.secondary)
+                    // The clock redraws only this line, once a minute.
+                    TimelineView(.everyMinute) { ctx in
+                        Text(String(localized: "环境模式 · \(hm(ctx.date))"))
+                            .font(.footnote).foregroundStyle(Palette.secondary)
+                    }
                 }
                 Spacer()
                 PassportChip()
@@ -154,12 +157,19 @@ struct AmbientView: View {
 /// Minimised ambient (decision Q2): under the nav bar while ambient runs.
 struct AmbientPill: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.scenePhase) private var scene
 
     var body: some View {
         let a = model.ambient
         HStack(spacing: 10) {
-            TimelineView(.periodic(from: .now, by: LevelTrail.interval)) { _ in
-                MiniMeter(level: a.phase == .listening ? meterLevel() : 0)
+            Group {
+                // The meter ticks only while it has a level to show, on screen: ambient keeps the
+                // app running behind the lock screen, and a timeline would keep ticking there.
+                if a.phase == .listening, scene == .active {
+                    TimelineView(.periodic(from: .now, by: LevelTrail.interval)) { _ in MiniMeter(level: meterLevel()) }
+                } else {
+                    MiniMeter(level: 0)
+                }
             }
             .frame(width: 28, height: 20)
             VStack(alignment: .leading, spacing: 1) {
@@ -197,6 +207,7 @@ struct AmbientPill: View {
         case .deaf: return String(localized: "听不到了")
         case .seatTaken: return String(localized: "另一台设备在听")
         case .interrupted: return String(localized: "已暂停")
+        case .offline: return String(localized: "连不上")
         case .failed: return String(localized: "出了问题")
         case .starting: return String(localized: "正在打开…")
         default:

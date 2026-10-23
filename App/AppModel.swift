@@ -71,8 +71,6 @@ final class AppModel: ObservableObject {
     @Published var onboarding: Bool
     /// 先体验 is running (`TryMode`).
     @Published var trying = false
-    /// Ticks once a second while visible, for time-based display (the ambient view's clock).
-    @Published var now = Date()
     /// The channel rejected the device token: the app needs pairing again.
     @Published var needsPairing = DeviceCredentials.shared.unauthorized
     /// The pairing sheet, with the link it was opened with (nil: scan or paste one).
@@ -145,7 +143,6 @@ final class AppModel: ObservableObject {
     func refresh() {
         let d = PocketEngine.shared.snapshot()
         if d != device { device = d }
-        now = Date()
         Task.detached {
             let st = Tailnet.shared.status()
             await MainActor.run { if self.tailnet != st { self.tailnet = st } }
@@ -266,6 +263,7 @@ final class AppModel: ObservableObject {
             switch ambient.phase {
             case .deaf, .seatTaken, .failed: return (.unavailable, String(localized: "环境模式 · 听不到了"), false)
             case .interrupted: return (.unavailable, String(localized: "环境模式 · 已暂停"), false)
+            case .offline: return (.unavailable, String(localized: "环境模式 · 连不上，已停止收音"), false)
             case .starting: return (.listening, String(localized: "环境模式 · 正在打开"), true)
             default:
                 if ambient.speaking { return (.speaking(aloud: true), String(localized: "环境模式 · 正在说"), true) }

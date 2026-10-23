@@ -160,9 +160,12 @@ final class PassportLink: NSObject, CBCentralManagerDelegate, CBPeripheralDelega
             adopt(p)
             central.connect(p)
             set(.connecting, "saved")
+            // No scan beside it: a scan runs the radio until the Passport is back in range, while
+            // the pending connect costs nothing. A Passport whose address rotates (the simulator)
+            // is found again after 忘记.
+            return
         }
-        // Scan as well: a never-paired Passport, or a simulator whose address rotates.
-        // Background scanning requires the service filter.
+        // None saved, or its bond is stale: scan. Background scanning requires the service filter.
         central.scanForPeripherals(withServices: [serviceUUID])
         if peripheral == nil { set(.scanning) }
     }

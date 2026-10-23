@@ -44,7 +44,13 @@ final class VoiceIO: @unchecked Sendable {
     private var noteEncoder: OpusVoiceEncoder?
     private var notePackets: [Data] = []
     private var ambientEncoder: OpusVoiceEncoder?
-    private var ambientSink: ((Data) -> Void)?
+    private var ambientSink: (([Data]) -> Void)?
+    /// Whether ambient capture is encoded: only while the room's connection is open, so a phone
+    /// that cannot reach the room does not spend the encoder on packets nobody receives.
+    private var ambientEncoding = false
+    /// Set when encoding resumes; the capture thread empties the encoder's buffer before the next
+    /// push (the encoder is used on that thread only).
+    private var ambientEncoderStale = false
 
     /// Whether the running engine has voice processing (echo cancellation) on: the `aec` value of
     /// `hello`.
@@ -427,16 +433,19 @@ final class VoiceIO: @unchecked Sendable {
 
         lock.lock()
         levelBits = Self.follow(levelBits, rms: rms)
-        let noteEnc = noteEncoder, ambEnc = ambientEncoder, sink = ambientSink
+        let noteEnc = noteEncoder, ambEnc = ambientEncoding ? ambientEncoder : nil, sink = ambientSink
+        let stale = ambEnc != nil && ambientEncoderStale
+        if stale { ambientEncoderStale = false }
         lock.unlock()
+        if stale { ambEnc?.reset() }
 
         if let noteEnc, let packets = try? noteEnc.push(samples), !packets.isEmpty {
             lock.lock()
             if noteEncoder === noteEnc { notePackets.append(contentsOf: packets) }
             lock.unlock()
         }
-        if let ambEnc, let sink, let packets = try? ambEnc.push(samples) {
-            for p in packets { sink(p) }
+        if let ambEnc, let sink, let packets = try? ambEnc.push(samples), !packets.isEmpty {
+            sink(packets)
         }
     }
 
@@ -486,7 +495,16 @@ final class VoiceIO: @unchecked Sendable {
 
     // MARK: ambient
 
-    func startAmbient(_ sink: @escaping (Data) -> Void) throws {
+    /// Turns ambient encoding on or off (`ambientEncoding`). Turning it on starts from an empty
+    /// encoder buffer, so no audio from before the gap is stitched to the new packets.
+    func setAmbientEncoding(_ on: Bool) {
+        lock.lock()
+        if on, !ambientEncoding { ambientEncoderStale = true }
+        ambientEncoding = on
+        lock.unlock()
+    }
+
+    func startAmbient(_ sink: @escaping ([Data]) -> Void) throws {
         guard Self.permission == .granted else { throw Failure.permissionDenied }
         let enc: OpusVoiceEncoder
         do { enc = try OpusVoiceEncoder() } catch { throw Failure.opus("\(error)") }

@@ -27,16 +27,19 @@ import (
 	"sync"
 	"time"
 
+	"tailscale.com/logtail"
 	"tailscale.com/tsnet"
 )
 
 var (
 	mu  sync.Mutex
 	srv *tsnet.Server
-	// logMu guards logFile only. tsnet logs from inside Start, which holds mu,
-	// so the logger must not take mu.
+	// logMu guards logFile, logDir and events only. tsnet logs from inside
+	// Start, which holds mu, so the logger must not take mu.
 	logMu   sync.Mutex
 	logFile *os.File
+	logDir  string
+	events  EventHandler
 	tr      *http.Transport
 	client  *http.Client
 	target  chanTarget
@@ -76,12 +79,66 @@ func (t chanTarget) scheme() string {
 
 func (t chanTarget) origin() string { return t.scheme() + "://" + t.hostPort() }
 
+// EventHandler receives the few tsnet lines the app always keeps: the ones the
+// Tailscale patches mark with "pocket: " (Bridge/tailscale-patches).
+type EventHandler interface {
+	Event(line string)
+}
+
+// SetEventHandler sets (or with nil clears) the receiver of marked lines.
+func SetEventHandler(h EventHandler) {
+	logMu.Lock()
+	events = h
+	logMu.Unlock()
+}
+
+// logf is tsnet's logger. Marked lines go to the event handler. Everything
+// else goes to tsnet.log only while logging is on, without Tailscale's
+// verbose ([v1], [v2]) lines.
 func logf(format string, args ...any) {
+	line := fmt.Sprintf(format, args...)
+	logMu.Lock()
+	h, f := events, logFile
+	logMu.Unlock()
+	if h != nil && strings.Contains(line, "pocket: ") {
+		h.Event(line)
+	}
+	if f == nil || strings.Contains(line, "[v1] ") || strings.Contains(line, "[v2] ") {
+		return
+	}
 	logMu.Lock()
 	defer logMu.Unlock()
-	f := logFile
-	if f != nil {
-		fmt.Fprintf(f, time.Now().UTC().Format(time.RFC3339Nano)+" "+format+"\n", args...)
+	if logFile != nil {
+		fmt.Fprintln(logFile, time.Now().UTC().Format(time.RFC3339Nano)+" "+line)
+	}
+}
+
+// SetLogging turns the tsnet log file on or off. Off (the default) closes and
+// removes it, so a battery-bound device writes nothing per probe or packet.
+// Takes effect at once, also before Start.
+func SetLogging(on bool) {
+	logMu.Lock()
+	defer logMu.Unlock()
+	setLoggingLocked(on)
+}
+
+var loggingOn bool
+
+func setLoggingLocked(on bool) {
+	loggingOn = on
+	if logDir == "" {
+		return
+	}
+	path := filepath.Join(logDir, "tsnet.log")
+	if on && logFile == nil {
+		logFile, _ = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	}
+	if !on {
+		if logFile != nil {
+			logFile.Close()
+			logFile = nil
+		}
+		os.Remove(path)
 	}
 }
 
@@ -96,11 +153,14 @@ func Start(stateDir, hostname string) error {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return err
 	}
-	// Do not upload tailscaled logs to log.tailscale.io from the app.
+	// Do not upload tailscaled logs to log.tailscale.io from the app, and do
+	// not run logtail's local pipeline either (encoding, buffer files, a flush
+	// timer per line): the app keeps its own log.
 	os.Setenv("TS_NO_LOGS_NO_SUPPORT", "true")
-	lf, _ := os.OpenFile(filepath.Join(stateDir, "tsnet.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	logtail.Disable()
 	logMu.Lock()
-	logFile = lf
+	logDir = stateDir
+	setLoggingLocked(loggingOn)
 	logMu.Unlock()
 	s := &tsnet.Server{
 		Dir:      stateDir,
@@ -109,13 +169,6 @@ func Start(stateDir, hostname string) error {
 		UserLogf: func(format string, args ...any) { logf(format, args...) },
 	}
 	if err := s.Start(); err != nil {
-		// A retry opens the log again; do not leak this handle.
-		logMu.Lock()
-		logFile = nil
-		logMu.Unlock()
-		if lf != nil {
-			lf.Close()
-		}
 		return err
 	}
 	srv = s
@@ -248,6 +301,32 @@ func CloseIdle() {
 	if t != nil {
 		t.CloseIdleConnections()
 	}
+}
+
+// Rebind tells the node the network may have changed: it rebinds its sockets
+// and probes paths again. The app calls it on a network path change, because
+// a node outside a Network Extension cannot watch the route socket itself
+// (Bridge/tailscale-patches). Returns at once; the work runs in the node.
+func Rebind() {
+	s, err := server()
+	if err != nil {
+		return
+	}
+	lc, err := s.LocalClient()
+	if err != nil {
+		return
+	}
+	// As Tailscale's own reaction to a major link change: rebind the sockets,
+	// then probe the paths again. The probe also ends a periodic-probe pause
+	// (Bridge/tailscale-patches) when the new network has a UDP path.
+	// In-process local API calls that only schedule the work: no deadline.
+	go func() {
+		for _, action := range []string{"rebind", "restun"} {
+			if err := lc.DebugAction(context.Background(), action); err != nil {
+				logf("pocket: %s failed: %v", action, err)
+			}
+		}
+	}()
 }
 
 // Response is the result of Do.

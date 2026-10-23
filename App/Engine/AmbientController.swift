@@ -19,6 +19,9 @@ struct AmbientSnapshot: Equatable {
         case deaf
         /// Audio session interrupted (call, Siri, alarm).
         case interrupted
+        /// The room stayed unreachable through the redial backoff's longest pause: the microphone
+        /// is stopped until the connection is back with the app in front.
+        case offline
         case failed(String)
     }
 
@@ -91,6 +94,8 @@ final class AmbientController: @unchecked Sendable {
     /// The audio session is interrupted: capture is stopped until the resume.
     private var interrupted: Bool { interruption.active }
     private var failure: String?
+    /// Capture stopped because the room cannot be reached (`linkDown`).
+    private var linkPaused = false
 
     private let snapLock = NSLock()
     private var snap = AmbientSnapshot()
@@ -136,6 +141,7 @@ final class AmbientController: @unchecked Sendable {
             settings = ChannelSettings.load()
             tuning = PocketTuning.load()
             on = true
+            linkPaused = false
             setSilentOnQueue(false)
             interruption.clear()
             AmbientNotice.withdraw()
@@ -168,6 +174,7 @@ final class AmbientController: @unchecked Sendable {
         queue.async { [self] in
             guard on else { return }
             on = false
+            linkPaused = false
             // Interruptions are tracked while ambient runs only; the reopened connection asks
             // for the setting again.
             interruption.clear()
@@ -211,6 +218,7 @@ final class AmbientController: @unchecked Sendable {
         queue.async { [self] in
             guard on else { return }
             failure = nil
+            linkPaused = false
             interruption.clear()
             AmbientNotice.withdraw()
             stopAll()
@@ -231,9 +239,9 @@ final class AmbientController: @unchecked Sendable {
 
     private func startAudio() {
         do {
-            try VoiceIO.shared.startAmbient { [weak self] packet in
-                // Engine thread → our queue; one append-sized hop per 20 ms packet.
-                self?.queue.async { self?.uplink(packet) }
+            try VoiceIO.shared.startAmbient { [weak self] packets in
+                // Engine thread → our queue; one hop per capture block.
+                self?.queue.async { self?.uplink(packets) }
             }
             edge.aec = VoiceIO.shared.voiceProcessing
             decoder = try? OpusVoiceDecoder()
@@ -261,6 +269,7 @@ final class AmbientController: @unchecked Sendable {
 
     /// The held connection is gone (closed, replaced): nothing of it carries over.
     private func liveReplaced() {
+        VoiceIO.shared.setAmbientEncoding(false)
         liveConn = nil
         liveAudio = nil
         surfaceSent = nil
@@ -389,11 +398,50 @@ final class AmbientController: @unchecked Sendable {
     /// `shouldResume` starts again (also after a tap on the notice).
     func appBecameActive() {
         queue.async { [self] in
-            guard on, interruption.becameActive() == .resume else { return }
-            AppLog.shared.log("ambient_resumed_on_foreground")
-            resumeAfterInterruption()
+            guard on else { return }
+            if interruption.becameActive() == .resume {
+                AppLog.shared.log("ambient_resumed_on_foreground")
+                linkPaused = false
+                resumeAfterInterruption()
+            } else if linkPaused, live.isOpen {
+                resumeLink()
+            }
             publish()
         }
+    }
+
+    // MARK: the link (called by PocketEngine)
+
+    /// The room stayed unreachable through the redial backoff's longest pause: stop the
+    /// microphone. The redial goes on; `linkUp` starts capture again.
+    func linkDown() {
+        queue.async { [self] in
+            guard on, !linkPaused, failure == nil, !interrupted else { return }
+            linkPaused = true
+            stopRead()
+            VoiceIO.shared.stopAmbient()
+            edge.captureStopped()
+            decoder = nil
+            AppLog.shared.log("ambient_link_paused")
+            publish()
+        }
+    }
+
+    /// The connection is open again. Capture restarts with the app in front; in the background
+    /// it waits for the app to come to the front (`appBecameActive`).
+    func linkUp() {
+        queue.async { [self] in
+            guard on, linkPaused, AppPhase.isActive else { return }
+            resumeLink()
+            publish()
+        }
+    }
+
+    private func resumeLink() {
+        linkPaused = false
+        AppLog.shared.log("ambient_link_resumed")
+        newEdge()
+        startAudio()
     }
 
     private func resumeAfterInterruption() {
@@ -410,10 +458,10 @@ final class AmbientController: @unchecked Sendable {
         PocketEngine.shared.ensureLive("ambient_resume")
     }
 
-    private func uplink(_ packet: Data) {
-        guard on else { return }
+    private func uplink(_ packets: [Data]) {
+        guard on, !linkPaused else { return }
         if !edge.capturing { perform(edge.packetEncoded()) }
-        if edge.sendsAudio, live.isOpen { live.send(packet: packet) }
+        if edge.sendsAudio, live.isOpen { live.send(packets: packets) }
     }
 
     // MARK: socket
@@ -433,7 +481,10 @@ final class AmbientController: @unchecked Sendable {
 
     private func text(_ obj: [String: Any]) {
         let type = obj["type"] as? String
-        if type == "meta", let c = obj["conn"] as? String { liveConn = c }
+        if type == "meta", let c = obj["conn"] as? String {
+            liveConn = c
+            VoiceIO.shared.setAmbientEncoding(true)
+        }
         // Only audio-plane frames matter here; `PocketEngine` handles the conversation. They
         // matter with ambient off too: an audio-on connection is a mouth in message mode.
         guard type == "meta" || type == "audio_params" || type == "speech" || type == "stop_audio" else { return }
@@ -633,6 +684,8 @@ final class AmbientController: @unchecked Sendable {
             s.phase = .failed(failure)
         } else if interrupted {
             s.phase = .interrupted
+        } else if linkPaused {
+            s.phase = .offline
         } else if !edge.helloSent {
             s.phase = .starting
         } else if edge.role == .peer {

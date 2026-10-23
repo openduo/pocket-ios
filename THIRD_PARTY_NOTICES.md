@@ -12,7 +12,7 @@ covered in `NOTICE`.
 | github.com/tailscale/wireguard-go | v0.0.0-20260928213032-417aef361226 | MIT | compiled into `Tsbridge.xcframework` by gomobile |
 | go4.org/mem | v0.0.0-20240501181205-ae6ca9944745 | Apache-2.0 | compiled into `Tsbridge.xcframework` by gomobile |
 | github.com/go-json-experiment/json | v0.0.0-20260820222146-c27c302e5fc3 | BSD-3-Clause | compiled into `Tsbridge.xcframework` by gomobile |
-| tailscale.com | v1.104.0 | BSD-3-Clause | compiled into `Tsbridge.xcframework` by gomobile |
+| tailscale.com | v1.104.0 | BSD-3-Clause | compiled into `Tsbridge.xcframework` by gomobile; two files patched (`Bridge/tailscale-patches`) |
 | golang.org/x/crypto | v0.57.0 | BSD-3-Clause | compiled into `Tsbridge.xcframework` by gomobile |
 | golang.org/x/exp | v0.0.0-20260908205506-85c1c2202aba | BSD-3-Clause | compiled into `Tsbridge.xcframework` by gomobile |
 | github.com/x448/float16 | v0.8.4 | MIT | compiled into `Tsbridge.xcframework` by gomobile |

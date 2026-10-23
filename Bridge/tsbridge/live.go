@@ -5,9 +5,11 @@ package tsbridge
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -29,8 +31,10 @@ type LiveHandler interface {
 // takes the room's capture seat, and Opus flows both ways. A socket cannot
 // un-hello: leaving ambient mode closes it and opens a new one.
 var (
-	liveMu      sync.Mutex
-	liveConn    *websocket.Conn
+	liveMu   sync.Mutex
+	liveConn *websocket.Conn
+	// liveCork is liveConn's connection beneath the WebSocket library.
+	liveCork    *corkConn
 	liveHandler LiveHandler
 	// liveGen counts opens and closes. A dial that finishes after a later
 	// open or close is stale and its socket is dropped.
@@ -83,8 +87,23 @@ func LiveOpen(path, headersJSON string, timeoutMs int64) error {
 	gen := liveDrop()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
 	defer cancel()
+	// A transport of its own, so the socket's connection is wrapped (corkConn).
+	t2 := c.Transport.(*http.Transport).Clone()
+	base := t2.DialContext
+	if base == nil {
+		base = (&net.Dialer{}).DialContext
+	}
+	var cork *corkConn
+	t2.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		raw, err := base(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		cork = &corkConn{Conn: raw}
+		return cork, nil
+	}
 	conn, res, err := websocket.Dial(ctx, url, &websocket.DialOptions{
-		HTTPClient: &http.Client{Transport: c.Transport},
+		HTTPClient: &http.Client{Transport: t2},
 		HTTPHeader: header,
 	})
 	if err != nil {
@@ -103,6 +122,7 @@ func LiveOpen(path, headersJSON string, timeoutMs int64) error {
 		return errors.New("tsbridge: live socket closed while dialling")
 	}
 	liveConn = conn
+	liveCork = cork
 	h := liveHandler
 	liveMu.Unlock()
 	go liveReadLoop(conn, h)
@@ -160,6 +180,39 @@ func LiveSendText(text string) error { return liveWrite(websocket.MessageText, [
 // LiveSendBinary sends one binary frame (one Opus packet).
 func LiveSendBinary(data []byte) error { return liveWrite(websocket.MessageBinary, data) }
 
+// LiveSendBinaries sends several binary frames, one per packet, in one call
+// from the app: `framed` is each packet preceded by its length as a big-endian
+// uint16 (an Opus packet is at most 1275 bytes). The frames leave in one write
+// (corkConn). It stops at the first failed write.
+func LiveSendBinaries(framed []byte) (err error) {
+	liveMu.Lock()
+	cork := liveCork
+	liveMu.Unlock()
+	if cork != nil {
+		cork.hold()
+		defer func() {
+			if e := cork.release(); err == nil {
+				err = e
+			}
+		}()
+	}
+	for len(framed) > 0 {
+		if len(framed) < 2 {
+			return errors.New("tsbridge: truncated packet length")
+		}
+		n := int(binary.BigEndian.Uint16(framed))
+		framed = framed[2:]
+		if n > len(framed) {
+			return errors.New("tsbridge: truncated packet")
+		}
+		if err := liveWrite(websocket.MessageBinary, framed[:n]); err != nil {
+			return err
+		}
+		framed = framed[n:]
+	}
+	return nil
+}
+
 // LiveIsOpen reports whether a socket is held. After a suspension it may be
 // stale; LivePing tells.
 func LiveIsOpen() bool {
@@ -195,6 +248,7 @@ func liveDrop() uint64 {
 	gen := liveGen
 	c := liveConn
 	liveConn = nil
+	liveCork = nil
 	liveMu.Unlock()
 	if c != nil {
 		c.CloseNow()

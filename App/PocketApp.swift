@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         ArrivalMonitor.shared.start(relaunchedForLocation: opts?[.location] != nil)
         // Registration must finish before launch ends (BGTaskScheduler requirement).
         AnswerRefresh.register()
+        MetricsLog.shared.start()
         #if DEBUG
         Demo.runAmbientProbe()
         Demo.runPlaybackProbe()
@@ -93,6 +94,8 @@ struct PocketApp: App {
             AppPhase.set(name)
             AppLog.shared.log("scene_phase", ["phase": name])
             model.setActive(p == .active)
+            // The network may have changed while the app was suspended.
+            if p == .active { Tailnet.shared.rebind() }
             if p == .active { PocketEngine.shared.appBecameActive() }
             if p == .active { AmbientController.shared.appBecameActive() }
             // Also when the extension could not open the app and the user did.

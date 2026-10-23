@@ -13,6 +13,12 @@ done
 for f in $(git ls-files --cached --others --exclude-standard -- \
   '*.swift' '*.go' '*.c' '*.h' '*.sh' '*.py' '*.xcconfig'); do
   [ -f "$f" ] || continue
+  # Patched upstream Tailscale files keep their own licence.
+  case "$f" in
+  Bridge/tailscale-patches/*)
+    head -n 4 "$f" | grep -q 'SPDX-License-Identifier: BSD-3-Clause' || { echo "missing SPDX header: $f"; bad=1; }
+    continue ;;
+  esac
   if ! head -n 4 "$f" | grep -q 'SPDX-License-Identifier: FSL-1.1-Apache-2.0'; then
     echo "missing SPDX header: $f"
     bad=1
