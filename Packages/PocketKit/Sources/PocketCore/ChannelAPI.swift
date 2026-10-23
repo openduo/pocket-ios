@@ -212,8 +212,10 @@ public enum ChannelPaths {
     }
 
     /// Headers of a typed message. The key is the message id; a retry sends the same key.
-    public static func typedMessageHeaders(key: String, surface: Surface) -> [String: String] {
+    /// `place` is a pending arrival report, if any.
+    public static func typedMessageHeaders(key: String, surface: Surface, place: PlaceReport? = nil) -> [String: String] {
         ["Content-Type": "application/json", "Idempotency-Key": key].merging(surface.headers) { a, _ in a }
+            .merging(place?.headers ?? [:]) { a, _ in a }
     }
 
     /// Typed message body: text plus the upload results (with `path`).

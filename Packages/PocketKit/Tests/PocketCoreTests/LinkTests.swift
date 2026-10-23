@@ -65,7 +65,7 @@ final class LinkPDUTests: XCTestCase {
         var r = LinkReassembler()
         var out: [(UInt8, Data)] = []
         for v in [fr[0], state, fr[1], fr[2]] + fr {
-            if let m = try r.push(try LinkPDU.decode(v)) { out.append(m) }
+            if let m = try r.push(try LinkPDU.decode(v)) { out.append((m.type, m.payload)) }
         }
         // The interrupted message is dropped. The PDU header has no "first fragment" flag, so the
         // stray tail fragments read as a shorter message of their own (the type decoder rejects
@@ -183,6 +183,42 @@ final class LinkMessageTests: XCTestCase {
         XCTAssertNoThrow(try PhoneMessage.reply(replyID: 5, final: true, text: long).fragments(attPayload: 182))
     }
 
+    func testQuietReplySetsFlagBit1OnEveryPDU() throws {
+        // ble-protocol §7 item 10 (1.3): quiet is PDU flags bit1 on every PDU of a REPLY.
+        let one = try PhoneMessage.reply(replyID: 0x01020304, final: false, text: "a").fragments(attPayload: 182, quiet: true)
+        XCTAssertEqual(one.map { [UInt8]($0) }, [[0x82, 0x02, 0x06, 0x00, 0x04, 0x03, 0x02, 0x01, 0, 0x61]])
+        let long = PhoneMessage.reply(replyID: 7, final: true, text: String(repeating: "多", count: 100))
+        let frags = try long.fragments(attPayload: 23, quiet: true)
+        XCTAssertGreaterThan(frags.count, 1)
+        XCTAssertEqual(frags.dropLast().map { $0[1] }, Array(repeating: 0x03, count: frags.count - 1))
+        XCTAssertEqual(frags.last?[1], 0x02)
+        var d = PhoneLinkDecoder()
+        var out: PhoneMessage?
+        for f in frags { out = try d.push(f) ?? out }
+        XCTAssertEqual(out, long)
+        XCTAssertTrue(d.quiet)
+        // Not quiet: flags as before 1.3.
+        XCTAssertEqual(try long.fragments(attPayload: 23).map { $0[1] & LinkPDU.flagQuiet }, Array(repeating: 0, count: frags.count))
+        _ = try d.push(try PhoneMessage.reply(replyID: 8, final: true, text: "b").fragments(attPayload: 182)[0])
+        XCTAssertFalse(d.quiet)
+    }
+
+    func testQuietAppliesToReplyOnly() throws {
+        for m: PhoneMessage in [.replyDone(replyID: 1), .result(pressID: 1, code: .transcribed, text: "x"),
+                                .appState(.ok, language: .en), .work(phase: .thinking, label: "")] {
+            XCTAssertEqual(try m.fragments(attPayload: 182, quiet: true).map { $0[1] }, [0], "\(m)")
+        }
+    }
+
+    func testQuietBitDoesNotChangeFragmentReading() throws {
+        // A receiver that knows only bit0 (a 1.2 device tests `flags & 1`) reads the same message.
+        let m = PhoneMessage.reply(replyID: 9, final: false, text: String(repeating: "答", count: 60))
+        let plain = try m.fragments(attPayload: 40)
+        let quiet = try m.fragments(attPayload: 40, quiet: true)
+        XCTAssertEqual(quiet.map { $0[1] & LinkPDU.flagMore }, plain.map { $0[1] & LinkPDU.flagMore })
+        XCTAssertEqual(quiet.map { $0.dropFirst(2) }, plain.map { $0.dropFirst(2) })
+    }
+
     func testReplyReachesTheDeviceAsPlainText() {
         let fitted = PhoneMessage.reply(replyID: 1, final: true, text: "# 标题\n\n**明天** 9 点\n\n- 带伞").fitted(maxMessage: 4096)
         XCTAssertEqual(fitted, .reply(replyID: 1, final: true, text: "标题\n明天 9 点\n带伞"))
@@ -199,6 +235,6 @@ final class LinkMessageTests: XCTestCase {
         XCTAssertEqual(UILanguage(localization: "en"), .en)
         XCTAssertEqual(UILanguage(localization: "fr"), .en)
         XCTAssertEqual(UILanguage(localization: nil), .zhHans)
-        XCTAssertEqual(PocketConstants.protoMinor, 2)
+        XCTAssertEqual(PocketConstants.protoMinor, 3)
     }
 }

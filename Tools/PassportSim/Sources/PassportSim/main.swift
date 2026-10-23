@@ -205,7 +205,7 @@ final class Sim: NSObject, CBPeripheralManagerDelegate {
             log("RESULT", ["press": id, "code": code.rawValue, "name": "\(code)", "text": text])
         case .reply(let id, let final, let text):
             lastReply[id] = text
-            log("REPLY", ["reply_id": id, "final": final, "len": text.count, "text": text])
+            log("REPLY", ["reply_id": id, "final": final, "quiet": decoder.quiet, "len": text.count, "text": text])
         case .replyDone(let id):
             log("REPLY_DONE", ["reply_id": id, "had_text": lastReply[id] != nil])
             stopKeepalive()

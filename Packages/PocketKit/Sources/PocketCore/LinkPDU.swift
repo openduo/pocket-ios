@@ -4,18 +4,23 @@
 import Foundation
 
 /// One PDU on the Passport link (docs/ble-protocol.md §6): `[type u8][flags u8][len u16 LE][payload]`.
-/// One PDU per ATT value (one notification or one write). `flags bit0` = more fragments follow.
+/// One PDU per ATT value (one notification or one write). `flags bit0` = more fragments follow;
+/// `flags bit1` = quiet (REPLY only, protocol 1.3: store the answer without an alert). A receiver
+/// ignores flag bits it does not know.
 public struct LinkPDU: Equatable {
     public static let headerBytes = 4
     public static let flagMore: UInt8 = 0x01
+    public static let flagQuiet: UInt8 = 0x02
 
     public var type: UInt8
     public var more: Bool
+    public var quiet: Bool
     public var payload: Data
 
-    public init(type: UInt8, more: Bool, payload: Data) {
+    public init(type: UInt8, more: Bool, quiet: Bool = false, payload: Data) {
         self.type = type
         self.more = more
+        self.quiet = quiet
         self.payload = payload
     }
 
@@ -27,7 +32,7 @@ public struct LinkPDU: Equatable {
     public func encoded() -> Data {
         var w = ByteWriter()
         w.u8(type)
-        w.u8(more ? LinkPDU.flagMore : 0)
+        w.u8((more ? LinkPDU.flagMore : 0) | (quiet ? LinkPDU.flagQuiet : 0))
         w.u16(UInt16(payload.count))
         w.bytes(payload)
         return w.data
@@ -43,7 +48,7 @@ public struct LinkPDU: Equatable {
         let len = Int(try r.u16())
         let body = r.rest()
         guard body.count == len else { throw DecodeError.lengthMismatch(declared: len, actual: body.count) }
-        return LinkPDU(type: type, more: flags & flagMore != 0, payload: body)
+        return LinkPDU(type: type, more: flags & flagMore != 0, quiet: flags & flagQuiet != 0, payload: body)
     }
 }
 
@@ -58,17 +63,20 @@ public enum LinkFragmenter {
     ///   - attPayload: the largest ATT value the link carries now (for phone writes,
     ///     `maximumWriteValueLength(for: .withoutResponse)`; it follows the negotiated MTU).
     ///   - maxMessage: the reassembly bound both ends agree on.
+    ///   - quiet: sets the quiet bit on every PDU of the message.
     public static func fragments(type: UInt8, message: Data, attPayload: Int,
-                                 maxMessage: Int = PocketConstants.maxMessageBytes) throws -> [Data] {
+                                 maxMessage: Int = PocketConstants.maxMessageBytes,
+                                 quiet: Bool = false) throws -> [Data] {
         let room = attPayload - LinkPDU.headerBytes
         guard room > 0 else { throw Failure.attTooSmall(attPayload) }
         guard message.count <= maxMessage else { throw Failure.messageTooLarge(message.count, max: maxMessage) }
-        if message.isEmpty { return [LinkPDU(type: type, more: false, payload: Data()).encoded()] }
+        if message.isEmpty { return [LinkPDU(type: type, more: false, quiet: quiet, payload: Data()).encoded()] }
         var out: [Data] = []
         var start = message.startIndex
         while start < message.endIndex {
             let end = min(start + room, message.endIndex)
-            out.append(LinkPDU(type: type, more: end < message.endIndex, payload: Data(message[start..<end])).encoded())
+            out.append(LinkPDU(type: type, more: end < message.endIndex, quiet: quiet,
+                               payload: Data(message[start..<end])).encoded())
             start = end
         }
         return out
@@ -94,8 +102,10 @@ public struct LinkReassembler {
     }
 
     /// Feeds one PDU. Returns the completed message payload, or nil while fragments are pending.
-    /// A message over `maxMessage` is dropped whole and reported.
-    public mutating func push(_ pdu: LinkPDU) throws -> (type: UInt8, payload: Data)? {
+    /// `quiet` is the bit of the PDU that completes the message (the sender sets it on every PDU,
+    /// and the Passport reads the last one). A message over `maxMessage` is dropped whole and
+    /// reported.
+    public mutating func push(_ pdu: LinkPDU) throws -> (type: UInt8, payload: Data, quiet: Bool)? {
         if let t = partialType, t != pdu.type {
             interrupted += 1
             reset()
@@ -110,11 +120,11 @@ public struct LinkReassembler {
             partial.append(pdu.payload)
             return nil
         }
-        if partialType == nil { return (pdu.type, pdu.payload) }
+        if partialType == nil { return (pdu.type, pdu.payload, pdu.quiet) }
         partial.append(pdu.payload)
         let out = partial
         reset()
-        return (pdu.type, out)
+        return (pdu.type, out, pdu.quiet)
     }
 
     /// Drops a partial message (link lost).

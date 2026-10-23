@@ -444,6 +444,8 @@ final class AppModel: ObservableObject {
                 return
             }
             AmbientController.shared.turnOn()
+            // Asked here, in context: the notice is for an interrupted ambient session.
+            AmbientNotice.requestPermissionIfUndecided()
             if expand { ambientExpanded = true }
         }
     }

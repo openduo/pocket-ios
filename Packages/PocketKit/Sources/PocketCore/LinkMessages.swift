@@ -236,9 +236,13 @@ public enum PhoneMessage: Equatable {
     }
 
     /// The message as PDUs for an ATT value size, with REPLY text cut to fit the message bound.
-    public func fragments(attPayload: Int, maxMessage: Int = PocketConstants.maxMessageBytes) throws -> [Data] {
+    /// `quiet` (protocol 1.3, ble-protocol §7 item 10) sets the PDU quiet bit on a REPLY: the
+    /// device stores the answer without lighting its screen or playing its tone. It is ignored
+    /// for every other message, whose quiet bit stays 0.
+    public func fragments(attPayload: Int, maxMessage: Int = PocketConstants.maxMessageBytes,
+                          quiet: Bool = false) throws -> [Data] {
         try LinkFragmenter.fragments(type: kind.rawValue, message: fitted(maxMessage: maxMessage).payload(),
-                                     attPayload: attPayload, maxMessage: maxMessage)
+                                     attPayload: attPayload, maxMessage: maxMessage, quiet: quiet && kind == .reply)
     }
 
     /// REPLY text loses its Markdown syntax: the device shows plain text, where `**` and `#` would
@@ -284,7 +288,7 @@ public struct DeviceLinkDecoder {
 
     public mutating func push(_ value: Data) throws -> DeviceMessage? {
         let pdu = try LinkPDU.decode(value)
-        guard let (type, payload) = try reassembler.push(pdu) else { return nil }
+        guard let (type, payload, _) = try reassembler.push(pdu) else { return nil }
         return try DeviceMessage.decode(type: type, payload: payload)
     }
 
@@ -294,6 +298,8 @@ public struct DeviceLinkDecoder {
 /// The device-side twin of `DeviceLinkDecoder`, used by the Passport simulator and tests.
 public struct PhoneLinkDecoder {
     private var reassembler: LinkReassembler
+    /// The quiet bit of the message `push` returned last (REPLY, protocol 1.3).
+    public private(set) var quiet = false
 
     public init(maxMessage: Int = PocketConstants.maxMessageBytes) {
         reassembler = LinkReassembler(maxMessage: maxMessage)
@@ -301,7 +307,8 @@ public struct PhoneLinkDecoder {
 
     public mutating func push(_ value: Data) throws -> PhoneMessage? {
         let pdu = try LinkPDU.decode(value)
-        guard let (type, payload) = try reassembler.push(pdu) else { return nil }
+        guard let (type, payload, quiet) = try reassembler.push(pdu) else { return nil }
+        self.quiet = quiet
         return try PhoneMessage.decode(type: type, payload: payload)
     }
 

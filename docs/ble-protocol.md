@@ -151,7 +151,8 @@ device in iOS Settings › Bluetooth, re-pair on the Passport, then reopen the a
 ## 6. PDU
 
 `[type u8][flags u8][len u16 LE][payload]`, one PDU per ATT value. `flags bit0` = more fragments
-follow. A message longer than one ATT value is split into consecutive PDUs of the same type.
+follow. `flags bit1` = quiet (REPLY only, protocol 1.3, section 7 item 10). The other bits are 0;
+a receiver ignores bits it does not know. A message longer than one ATT value is split into consecutive PDUs of the same type.
 Fragments of one message are consecutive: any other PDU arriving between them drops the partial
 message. A PDU whose `len` differs from the value length is dropped.
 
@@ -179,15 +180,16 @@ Phone → device:
 | Type | Name | Payload |
 |---|---|---|
 | 0x81 | RESULT | press_id u16, code u8 (0 transcribed, 1 empty, 2 asr_failed, 3 send_failed, 4 not_connected_to_server), UTF-8 text (the text the brain receives when code 0) |
-| 0x82 | REPLY | reply_id u32, final u8, UTF-8 plain text, Markdown syntax removed by the phone (replace semantics: the device shows the latest full text for the id) |
+| 0x82 | REPLY | reply_id u32, final u8, UTF-8 plain text, Markdown syntax removed by the phone (replace semantics: the device shows the latest full text for the id); PDU `flags bit1` = quiet (protocol 1.3, item 10) |
 | 0x83 | REPLY_DONE | reply_id u32 (the device stops its keepalive) |
 | 0x84 | APP_STATE | state u8 (0 ok, 1 server unreachable, 2 protocol major mismatch), then language u8 (protocol 1.2, item 9) |
 | 0x85 | WORK | phase u8, optional UTF-8 label (protocol 1.1) |
 
 All integers are little-endian. INFO carries the protocol version: a different major is refused
-with a visible error on both ends; minors are additive. The app speaks 1.2. A 1.0 device ignores
+with a visible error on both ends; minors are additive. The app speaks 1.3. A 1.0 device ignores
 WORK as an unknown type; a 1.0 or 1.1 device ignores the language byte after APP_STATE's state
-(its parser ignores bytes after the fixed fields). The device owns the tap threshold; the app treats a press of any length as
+(its parser ignores bytes after the fixed fields); a 1.0 to 1.2 device ignores the REPLY quiet bit
+(its PDU reader tests only `flags bit0`). The device owns the tap threshold; the app treats a press of any length as
 speech.
 
 Payload details:
@@ -224,6 +226,21 @@ Payload details:
    (a 1.0/1.1 phone) or an unknown value leaves the device's language unchanged; the device's
    default is zh-Hans. Text that comes from the brain (RESULT text, REPLY, WORK label) is
    shown as sent and is not translated.
+10. **REPLY quiet** (protocol 1.3): PDU `flags bit1` on a REPLY. The phone sets it on every PDU
+    of the message; the device reads it from the PDU that completes the message. The REPLY
+    payload is unchanged.
+    - Phone: a REPLY is quiet when the app's surface display (section 2, the value it sends as
+      `X-Ambient-Display` and in the `surface` frame) is `phone_awake` or `phone` at the moment
+      the REPLY is handed to the link, unless the REPLY is the answer to a pending Passport press
+      (the answer that ends the press's wait, or the partial texts of a wait adopted from
+      KEEPALIVE). The answer is read on the phone; the Passport only keeps it.
+    - Device: a quiet REPLY is stored and shown like any other, but it neither lights the screen
+      nor plays the tone: a dark screen stays dark, a lit one shows it as an answer already
+      stored is shown. The alert is decided by the first REPLY of a `reply_id`, as before, so the
+      bit counts only on that REPLY; later REPLYs of the id never alert.
+    - Compatibility: a 1.0 to 1.2 device ignores the bit and alerts as before. A 1.0 to 1.2 phone
+      never sets it, so a 1.3 device alerts as before. The phone sets the bit whatever the
+      device's minor, because an older device ignores it.
 
 ## 8. Phone behaviour
 
@@ -300,7 +317,8 @@ Payload details:
 There is no time limit on the wait; a wait whose answer never comes ends through `turn idle`, the
 socket, or a new press.
 - Proactive answers: every answer the app receives is forwarded as REPLY
-  final + REPLY_DONE, with or without a pending press, so the device can alert. The app receives
+  final + REPLY_DONE, with or without a pending press, so the device can alert. With the app in
+  front the REPLY is quiet (section 7 item 10): the device stores it without an alert. The app receives
   answers live on `/live` (foreground, reply wait, ambient), as rows above its cursor when the
   link becomes ready (a BLE wake), and from Background App Refresh. Fully suspended, nothing
   arrives until the next wake. Without a pending press, partial REPLY texts (`final` 0) of a
@@ -315,4 +333,4 @@ socket, or a new press.
   in a link drop at that moment is not retried.
 - The device side is unchanged by the move to messages: it waits for RESULT with keepalives and no
   timeout; only the meaning of the RESULT text (what the brain receives) and its later arrival
-  changed. The link protocol stays 1.2.
+  changed. Protocol 1.3 adds only the REPLY quiet bit (section 7 item 10).

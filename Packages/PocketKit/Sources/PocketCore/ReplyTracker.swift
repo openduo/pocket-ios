@@ -86,6 +86,18 @@ public struct ReplyTracker {
     public var awaiting: Bool { waiting != nil }
     /// A waited message's turn was received; work frames are its turn's from now on.
     private var received = false
+    /// The reply id of the answer to a Passport press: the answer that ended a press wait, and
+    /// the partial texts sent while the wait has no message id (the next answer is the reply).
+    public private(set) var pressReplyID: UInt32?
+
+    /// Whether a REPLY goes to the device quietly (ble-protocol §7 item 10). With the app in
+    /// front (`display` `phone_awake` or `phone`, the value the app reports as its surface) the
+    /// answer is read on the phone, so the Passport stores it without lighting its screen or
+    /// playing its tone. The answer to a press is never quiet: the device shows its wait for it.
+    public func isQuiet(replyID: UInt32, display: Surface.Display) -> Bool {
+        guard replyID != pressReplyID else { return false }
+        return display == .phoneAwake || display == .phone
+    }
 
     public init() {}
 
@@ -153,6 +165,7 @@ public struct ReplyTracker {
             }
             if foldText.isEmpty { return [] }
             if foldReplyID == 0 { foldReplyID = nextReplyID() }
+            if waiting != nil { pressReplyID = foldReplyID }
             return [.reply(replyID: foldReplyID, final: false, text: foldText)]
         case "answer_final":
             let text = frame["text"] as? String ?? ""
@@ -245,7 +258,10 @@ public struct ReplyTracker {
     /// Sends an answer as final; ends the wait when it is the waited one.
     private mutating func accept(text: String, at: String?, replyID id: UInt32, endsWait: Bool) -> [PhoneMessage] {
         if id >= (memory.lastAnswer?.replyID ?? 0) { memory.lastAnswer = Answer(replyID: id, text: text, at: at) }
-        if endsWait { stopExpecting() }
+        if endsWait {
+            pressReplyID = id
+            stopExpecting()
+        }
         return [.reply(replyID: id, final: true, text: text), .replyDone(replyID: id)]
     }
 }

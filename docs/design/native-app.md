@@ -101,7 +101,8 @@ No room switching, no room list, no room preview. The room is a setting.
 | 3 Passport | Same as the pairing sheet (4.9). Skippable. | paired or skipped |
 
 Permissions are requested in context, not up front: microphone on first hold or first ambient on;
-Bluetooth on step 3 or the first Passport action; Photos/Camera on first use.
+notifications (alert only) on first ambient on, for the interruption notice (§7.6); Bluetooth on
+step 3 or the first Passport action; Photos/Camera on first use.
 
 ### 4.2 Conversation states
 
@@ -303,7 +304,7 @@ Two presentations of one state:
 | 静音 | user tapped 静音 | 在听; "已静音：还在听，回复只显示在屏幕上" |
 | Seat taken | `role: peer` (another edge in the same room) | "另一台设备在听" + 在这台手机上听 (re-hello) |
 | Deaf | `meta.state: unowned` while on, or mic revoked | `unavailable` mark, "听不到了" + 重新打开 |
-| Interrupted | `AVAudioSession` interruption | "来电，已暂停" ; resumes when the system says it may |
+| Interrupted | `AVAudioSession` interruption | "来电，已暂停" ; resumes when the system says it may, else on the next return to the front (§7.6) |
 | Off | user, or app left foreground (Q3) | pill disappears; answers are text only |
 
 ### 4.8 Passport chip and sheet (screens `passport-sheet`, `passport-pair`)
@@ -332,6 +333,18 @@ Grouped list. Editing host/room/port/TLS reruns the onboarding step-2 check inli
 Sound: 播放语音回复 (default off; with ambient mode off, the `/live` `audio` switch, §7.1), 保持屏幕常亮 (default off: while
 the app is in front the screen does not lock, so the phone can stand out as a speaker), 连着
 AirPods 时用 手机麦克风 (default) / AirPods 麦克风 (§4.6.1).
+Location: 让多多知道我到了哪 (default off). Turning it on asks for When In Use, then Always; without
+Always the switch stays on, a line says it has no effect, and 打开设置 opens the app's iOS
+settings. Turning it off stops visit monitoring and forgets the stored places. With it on and
+Always granted, `startMonitoringVisits` runs (restarted at every launch, including the background
+relaunch iOS does for a visit). A visit with a real arrival date is reverse-geocoded to a name and
+an area (district and city) and becomes the current place; the same name and area keeps the
+earlier arrival. The app keeps the last place the channel accepted; while the current one
+differs, each `POST /api/messages` (typed, phone or Passport voice note) carries
+`X-Ambient-Place` (percent-encoded JSON: `name`, `area`, `arrived` with offset, `previous`
+name and area when there is one), and so does the `/live` upgrade while ambient mode is on
+(turning ambient on replaces an open connection to send it). A 202, or the upgrade succeeding,
+marks that place reported; any other outcome leaves it for the next request. 先体验 never sends it.
 Tailscale row: state, node name, IP, 退出登录 (confirm). Diagnostics: export logs (app log +
 tsnet log + Passport log as one share sheet), version.
 
@@ -512,7 +525,22 @@ cerebellum, which decides and the channel sends `stop_audio{reason:"barge_in"}`.
   screen on while the app is in front (`isIdleTimerDisabled`), for a phone standing out as a
   speaker.
 - Interruptions (call, Siri, alarm): stop capture, close the socket (it reopens without `hello`),
-  show 已暂停; on `.ended` with `.shouldResume` restart capture and re-hello.
+  show 已暂停. Ambient mode stays on; only the user turns it off. `AmbientInterruption`
+  (PocketCore) holds the state: none, ongoing (began, no end), pending resume (ended without
+  `.shouldResume`).
+
+  | Event | State before | Action |
+  |---|---|---|
+  | `.began` (ambient on) | any | ongoing; stop capture |
+  | `.ended` with `.shouldResume` | ongoing or pending | resume: restart capture and re-hello |
+  | `.ended` without it, app active | ongoing or pending | resume |
+  | `.ended` without it, app not active | ongoing | pending resume; post the local notice 「环境模式被打断了」 (alert only, `ambient_interrupt_notified`) |
+  | scene phase active | pending resume | resume (`ambient_resumed_on_foreground`); a tap on the notice arrives this way |
+  | scene phase active | ongoing | nothing: a call in progress keeps the mic; wait for `.ended` or the next activation |
+  | resume, user on, user off, 重新打开 | any | none; withdraw the notice, delivered or pending |
+
+  Notification permission is asked once, on the first ambient on; denied, only the notice is lost.
+  No push, no background mode beyond `audio`.
 - Thermal state ≥ serious: show a note; no automatic shutdown in v1.
 - Answers for the Passport (no APNs): every answer the app receives is
   forwarded as REPLY, with or without a pending press: live on `/live` (foreground, press or reply
@@ -570,7 +598,8 @@ App/
 │             AudioIO · HoldTiming
 ├── Device/   PassportLink (BLE central)
 ├── Net/      Tailnet (tsnet, the /live socket) · ChannelClient (typed calls for section 6)
-├── Support/  Settings · AppLog · Demo (Debug fixtures and probes)
+├── Support/  Settings · AppLog · AmbientNotice (the interruption notice) · Demo (Debug fixtures
+│             and probes)
 └── Views/    ConversationView · ThreadView · Composer · AmbientView · PassportSheet ·
               SettingsView · OnboardingView · AttachmentViews · Theme
 Packages/PocketKit/   PocketCore (link codec, edge state machine, thread, cache, outbox) ·

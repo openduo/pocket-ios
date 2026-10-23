@@ -76,10 +76,14 @@ struct ChannelClient: Sendable {
 
     /// `POST /api/messages` with typed text. `key` is the message id; a resend with the same key
     /// gets the first receipt, so a text whose response was lost is not taken twice.
+    /// A pending arrival rides along and counts as reported once the message is accepted.
     func sendMessage(text: String, attachments: [ChannelAttachment], key: String) async throws -> MessageReceipt {
+        let place = ArrivalMonitor.shared.report()
         let (s, b) = try await call("POST", ChannelPaths.messages(room: settings.room),
-                                    headers: ChannelPaths.typedMessageHeaders(key: key, surface: PocketSurface.current()),
+                                    headers: ChannelPaths.typedMessageHeaders(key: key, surface: PocketSurface.current(),
+                                                                              place: place),
                                     body: ChannelPaths.typedMessageBody(text: text, attachments: attachments))
+        ArrivalMonitor.shared.settle(place, accepted: s == 202)
         guard s == 202 else { throw ChannelError.http(s, Self.errorText(b)) }
         return MessageReceipt.decode(b) ?? MessageReceipt(messageID: key, at: nil)
     }

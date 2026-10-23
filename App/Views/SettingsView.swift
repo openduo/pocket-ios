@@ -66,6 +66,7 @@ struct SettingsView: View {
                              : String(localized: "按住说话用手机麦克风，AirPods 继续放声音，音质不变。"))
                     }
                 }
+                arrivalSection
                 Section(String(localized: "配件")) {
                     NavigationLink { PassportSheet(pushed: true) } label: {
                         row("candybarphone", Palette.tertiary, "Passport", passportText, stacked: true)
@@ -103,6 +104,29 @@ struct SettingsView: View {
             .navigationTitle(String(localized: "设置"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button(String(localized: "完成")) { dismiss() } } }
+        }
+    }
+
+    /// 让多多知道我到了哪 (`ArrivalMonitor`). Without Always permission the switch stays on but
+    /// does nothing; the row under it says so and opens the app's page in iOS Settings.
+    private var arrivalSection: some View {
+        let arrivals = ArrivalMonitor.shared
+        return Section {
+            Toggle(isOn: Binding(get: { arrivals.enabled }, set: { arrivals.setEnabled($0) })) {
+                label("location", Palette.ok, String(localized: "让多多知道我到了哪"))
+            }
+            .disabled(model.trying)
+            if arrivals.needsAlways {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(String(localized: "定位权限需要设为「始终」，否则这个开关不起作用。"))
+                        .font(.footnote).foregroundStyle(Palette.attention)
+                    Button(String(localized: "打开设置")) {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                    }
+                }
+            }
+        } header: { Text(String(localized: "位置")) } footer: {
+            Text(String(localized: "只在你到达一个地方时记下地名，随你的下一条消息告诉你自己的多多；只发地名，不发坐标。"))
         }
     }
 

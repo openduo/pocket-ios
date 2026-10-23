@@ -8,7 +8,7 @@ probes on an iPhone XS Max and the Passport during development.
 
 | Name | Value | Kind | Basis |
 |---|---|---|---|
-| `protoMajor` / `protoMinor` | 1 / 2 | fixed | `docs/ble-protocol.md` §7; minor 1 adds WORK, minor 2 adds the APP_STATE language byte |
+| `protoMajor` / `protoMinor` | 1 / 3 | fixed | `docs/ble-protocol.md` §7; minor 1 adds WORK, minor 2 adds the APP_STATE language byte, minor 3 the REPLY quiet bit |
 | `clientAPIMajor` | 2 | fixed | the channel's client-API major this app speaks; a `ready` with a lower or absent `api` means the channel must be upgraded (`docs/ble-protocol.md` §3). Major 2: every data route needs the device token from pairing, and the token names the room |
 | `DeviceAuth.liveCloseCode` | 4401 | fixed | the channel's `/live` close code for a missing or revoked device token (application range 4000-4999); with HTTP 401 `unauthorized` it stops reconnecting until the user pairs again |
 | Device token storage | Keychain, after first unlock, this device only | fixed | a Passport press in the background must reach the channel; the token never syncs to other devices |

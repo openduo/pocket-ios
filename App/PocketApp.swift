@@ -16,6 +16,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // The central must exist before this returns for BLE state restoration to deliver.
         PocketEngine.shared.start()
         _ = ConversationStore.shared
+        // Before launch returns: a relaunch for a visit delivers it to this delegate.
+        ArrivalMonitor.shared.start(relaunchedForLocation: opts?[.location] != nil)
         // Registration must finish before launch ends (BGTaskScheduler requirement).
         AnswerRefresh.register()
         #if DEBUG
@@ -92,6 +94,7 @@ struct PocketApp: App {
             AppLog.shared.log("scene_phase", ["phase": name])
             model.setActive(p == .active)
             if p == .active { PocketEngine.shared.appBecameActive() }
+            if p == .active { AmbientController.shared.appBecameActive() }
             // Also when the extension could not open the app and the user did.
             if p == .active { model.importShares() }
             if p == .active || p == .background { AmbientController.shared.audioWantChanged(name) }
