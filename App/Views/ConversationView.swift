@@ -91,9 +91,11 @@ struct BarTitle: ViewModifier {
         if let inset, #available(iOS 27.1, *) {
             // Hiding the navigation bar would take the vertical bar's items with it; the empty
             // horizontal bar stays and the content runs up under it to the window's own inset.
-            // The empty bar's background would cover the content's first row.
+            // The empty bar's background would cover the content's first row. The inset strip
+            // above the content takes the page colour, not the stack's white.
             content.toolbar(removing: .title).toolbarBackground(.hidden, for: .navigationBar)
                 .ignoresSafeArea(.container, edges: .top).padding(.top, inset)
+                .background(Palette.background.ignoresSafeArea())
         } else if opaque {
             content.toolbarBackground(Palette.background, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
         } else {
