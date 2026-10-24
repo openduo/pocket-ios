@@ -125,7 +125,10 @@ private struct VerticalBarProbe: UIViewRepresentable {
         override init(frame: CGRect) {
             super.init(frame: frame)
             isUserInteractionEnabled = false
-            registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (v: Probe, _) in v.report() }
+            registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (v: Probe, _) in
+                v.report()
+                v.setNeedsLayout()
+            }
         }
 
         required init?(coder: NSCoder) { fatalError("not used") }
@@ -138,6 +141,14 @@ private struct VerticalBarProbe: UIViewRepresentable {
         // The window's inset changes with the posture and the orientation.
         override func safeAreaInsetsDidChange() {
             super.safeAreaInsetsDidChange()
+            report()
+        }
+
+        // A trait change can arrive before the window's inset settles, as when the app switcher
+        // renders the app in another orientation and hands it back. The layout pass that follows
+        // sees the settled inset.
+        override func layoutSubviews() {
+            super.layoutSubviews()
             report()
         }
 
