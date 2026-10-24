@@ -91,9 +91,11 @@ struct BarTitle: ViewModifier {
         if let inset, #available(iOS 27.1, *) {
             // Hiding the navigation bar would take the vertical bar's items with it; the empty
             // horizontal bar stays and the content runs up under it to the window's own inset.
-            // The empty bar's background would cover the content's first row.
+            // The empty bar's background would cover the content's first row. The inset strip
+            // above the content takes the page colour, not the stack's white.
             content.toolbar(removing: .title).toolbarBackground(.hidden, for: .navigationBar)
                 .ignoresSafeArea(.container, edges: .top).padding(.top, inset)
+                .background(Palette.background.ignoresSafeArea())
         } else if opaque {
             content.toolbarBackground(Palette.background, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
         } else {
@@ -123,7 +125,10 @@ private struct VerticalBarProbe: UIViewRepresentable {
         override init(frame: CGRect) {
             super.init(frame: frame)
             isUserInteractionEnabled = false
-            registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (v: Probe, _) in v.report() }
+            registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (v: Probe, _) in
+                v.report()
+                v.setNeedsLayout()
+            }
         }
 
         required init?(coder: NSCoder) { fatalError("not used") }
@@ -136,6 +141,14 @@ private struct VerticalBarProbe: UIViewRepresentable {
         // The window's inset changes with the posture and the orientation.
         override func safeAreaInsetsDidChange() {
             super.safeAreaInsetsDidChange()
+            report()
+        }
+
+        // A trait change can arrive before the window's inset settles, as when the app switcher
+        // renders the app in another orientation and hands it back. The layout pass that follows
+        // sees the settled inset.
+        override func layoutSubviews() {
+            super.layoutSubviews()
             report()
         }
 
