@@ -440,6 +440,10 @@ final class PocketEngine: @unchecked Sendable {
                                             "linked": linked, "quiet": quiet, "app": AppPhase.value])
                 update { $0.lastReply = text }
                 saveReplyMemory()
+                if !AppPhase.isActive, lastNotifiedReply != id {
+                    lastNotifiedReply = id
+                    AnswerNotice.post(replyID: id, text: text, silent: linked)
+                }
             case .reply:
                 // A partial may take a new id; the counter must not go back after a relaunch.
                 if tracker.memory.lastReplyID != savedReplyID { saveReplyMemory() }
@@ -453,6 +457,10 @@ final class PocketEngine: @unchecked Sendable {
         }
         if awaiting, !tracker.awaiting { endReplyWait(why) }
     }
+
+    /// The last answer posted as a local notification; a replay of the same final REPLY is not
+    /// posted twice.
+    private var lastNotifiedReply: UInt32?
 
     private func saveReplyMemory() {
         guard let d = try? JSONEncoder().encode(tracker.memory) else { return }

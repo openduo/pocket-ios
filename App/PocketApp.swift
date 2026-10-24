@@ -98,6 +98,7 @@ struct PocketApp: App {
             if p == .active { Tailnet.shared.rebind() }
             if p == .active { PocketEngine.shared.appBecameActive() }
             if p == .active { AmbientController.shared.appBecameActive() }
+            if p == .active { AnswerNotice.requestPermissionIfUndecided(); AnswerNotice.withdrawAll() }
             // Also when the extension could not open the app and the user did.
             if p == .active { model.importShares() }
             if p == .active || p == .background { AmbientController.shared.audioWantChanged(name) }
