@@ -113,6 +113,9 @@ public struct RoomState: Equatable, Sendable {
     /// `cerebellum_halt` with reason `protocol`: the channel and its cerebellum speak different
     /// majors, and both must be upgraded together.
     public var cerebellumMismatch: Bool
+    /// `push`: this channel pushes 多多's answers to this phone while it is not connected, once
+    /// the phone registers (`PUT /api/push`). False for older channels and with push turned off.
+    public var push: Bool = false
 
     public init(room: String = "", roomName: String = "", date: String = "", daemonOK: Bool? = nil,
                 cerebellumOK: Bool? = nil, muted: Bool = false, uploadMaxBytes: Int? = nil, uploadsDisabled: Bool = false,
@@ -147,6 +150,7 @@ public struct RoomState: Equatable, Sendable {
         }
         s.configIssues = o["config_issues"] as? [String] ?? []
         s.cerebellumMismatch = (o["cerebellum_halt"] as? [String: Any])?["reason"] as? String == "protocol"
+        s.push = o["push"] as? Bool ?? false
         return s
     }
 }
@@ -190,6 +194,8 @@ public enum ChannelPaths {
     }
 
     public static func state(room: String) -> String { "/api/state?room=" + q(room) }
+    /// The device's push registration (`PUSH_PATH`): `PUT` with grant and key, `DELETE`.
+    public static let push = "/api/push"
     public static func imlog(room: String, date: String) -> String { "/api/imlog?room=\(q(room))&date=\(q(date))" }
     public static func imlog(room: String, since: Int) -> String { "/api/imlog?room=\(q(room))&since=\(since)" }
     public static func messages(room: String) -> String { "/api/messages?room=" + q(room) }

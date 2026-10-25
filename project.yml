@@ -28,6 +28,7 @@ targets:
       # Includes App/PrivacyInfo.xcprivacy, which xcodegen puts in the Resources phase.
       - path: App
       - path: Shared
+      - path: SharedPush
       # Shown in Settings › 关于多多随身 › 开源许可.
       - path: LICENSE
         buildPhase: resources
@@ -42,11 +43,16 @@ targets:
         product: PocketCore
       - package: PocketKit
         product: PocketOpus
+      - package: PocketKit
+        product: PocketPush
       - target: DuoduoShare
+      - target: DuoduoPush
     entitlements:
       path: App/DuoduoPocket.entitlements
       properties:
         com.apple.security.application-groups: [group.$(POCKET_BUNDLE_ID)]
+        # Development signing; exporting for App Store Connect turns it into production.
+        aps-environment: development
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(POCKET_BUNDLE_ID)
@@ -134,6 +140,39 @@ targets:
               SUBQUERY(extensionItems, $item, SUBQUERY($item.attachments, $a,
               ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.data"
               OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.url").@count > 0).@count > 0
+  # Opens 多多's sealed answers that arrive by push (PushExtension/, docs/push.md).
+  DuoduoPush:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: PushExtension
+      - path: SharedPush
+    dependencies:
+      - package: PocketKit
+        product: PocketPush
+    entitlements:
+      path: PushExtension/DuoduoPush.entitlements
+      properties:
+        com.apple.security.application-groups: [group.$(POCKET_BUNDLE_ID)]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(POCKET_BUNDLE_ID).push
+        PRODUCT_NAME: DuoduoPush
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_EMIT_LOC_STRINGS: YES
+        LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+    info:
+      path: PushExtension/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleDisplayName: 多多
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        PocketAppGroup: group.$(POCKET_BUNDLE_ID)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
 schemes:
   DuoduoPocket:
     build:

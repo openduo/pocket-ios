@@ -59,6 +59,13 @@ struct ChannelClient: Sendable {
         throw ChannelError.http(s, Self.errorText(b))
     }
 
+    /// `PUT /api/push`: this device's relay grant and sealing key (standard base64).
+    func registerPush(grant: String, key: Data) async throws {
+        let body = try JSONSerialization.data(withJSONObject: ["grant": grant, "key": key.base64EncodedString()])
+        let (s, b) = try await call("PUT", ChannelPaths.push, headers: ["Content-Type": "application/json"], body: body)
+        guard s == 200 else { throw ChannelError.http(s, Self.errorText(b)) }
+    }
+
     /// `POST /api/pair` with the link's code, against the bridge's current target (the caller
     /// points it at the link's host first).
     func pair(_ link: PairingLink) async throws -> PairOutcome {
