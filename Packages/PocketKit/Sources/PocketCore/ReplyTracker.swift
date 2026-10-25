@@ -34,6 +34,9 @@ public struct ReplyTracker {
         public var replyID: UInt32
         public var text: String
         public var at: String?
+        /// The `message_ids` it answers: with the text, they name the answer's notification
+        /// (`PushFormat.answerID`). Nil in memory written before they were kept.
+        public var messages: [String]? = nil
     }
 
     /// An answer sent to the device from its live `answer_final`, kept until its row arrives.
@@ -178,7 +181,7 @@ public struct ReplyTracker {
             }
             if id == PocketConstants.noReplyID { id = nextReplyID() }
             memory.delivered.append(Delivered(text: Self.fingerprint(text), messages: ids, replyID: id))
-            return accept(text: text, at: nil, replyID: id, endsWait: names(ids))
+            return accept(text: text, at: nil, replyID: id, messages: ids, endsWait: names(ids))
         case "turn":
             guard let w = waiting else { return [] }
             let ids = LiveEvent.messageIDs(frame)
@@ -228,10 +231,12 @@ public struct ReplyTracker {
             }
         }
         if let w = waiting, !w.isEmpty, let e = fresh.first(where: { names($0.message_ids ?? []) }) {
-            return accept(text: e.shownText, at: e.at, replyID: nextReplyID(), endsWait: true)
+            return accept(text: e.shownText, at: e.at, replyID: nextReplyID(), messages: e.message_ids ?? [],
+                          endsWait: true)
         }
         guard let e = fresh.last else { return [] }
-        return accept(text: e.shownText, at: e.at, replyID: nextReplyID(), endsWait: waiting?.isEmpty == true)
+        return accept(text: e.shownText, at: e.at, replyID: nextReplyID(), messages: e.message_ids ?? [],
+                      endsWait: waiting?.isEmpty == true)
     }
 
     /// Live answers whose rows will never come above the cursor (a connection opened without
@@ -256,8 +261,11 @@ public struct ReplyTracker {
     }
 
     /// Sends an answer as final; ends the wait when it is the waited one.
-    private mutating func accept(text: String, at: String?, replyID id: UInt32, endsWait: Bool) -> [PhoneMessage] {
-        if id >= (memory.lastAnswer?.replyID ?? 0) { memory.lastAnswer = Answer(replyID: id, text: text, at: at) }
+    private mutating func accept(text: String, at: String?, replyID id: UInt32, messages: [String],
+                                 endsWait: Bool) -> [PhoneMessage] {
+        if id >= (memory.lastAnswer?.replyID ?? 0) {
+            memory.lastAnswer = Answer(replyID: id, text: text, at: at, messages: messages)
+        }
         if endsWait {
             pressReplyID = id
             stopExpecting()

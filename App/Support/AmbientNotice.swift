@@ -8,7 +8,7 @@ import UserNotifications
 /// Tapping it opens the app, which resumes ambient mode on activation. Alert only: no sound, no
 /// badge.
 enum AmbientNotice {
-    private static let id = "ambient-interrupted"
+    static let id = "ambient-interrupted"
 
     /// Asks for permission the first time ambient mode is turned on; sound is for `AnswerNotice`.
     /// iOS shows the prompt only while undecided; a denial changes nothing else.

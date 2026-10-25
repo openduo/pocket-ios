@@ -14,6 +14,8 @@ let package = Package(
     products: [
         .library(name: "PocketCore", targets: ["PocketCore"]),
         .library(name: "PocketOpus", targets: ["PocketOpus"]),
+        // The push format, shared by the app and its notification service extension.
+        .library(name: "PocketPush", targets: ["PocketPush"]),
     ],
     dependencies: [
         // DuoDuo's answers are Markdown; parsed here, drawn by the app.
@@ -25,7 +27,9 @@ let package = Package(
         .binaryTarget(name: "Opus", path: "Vendor/Opus.xcframework"),
         .target(name: "COpusShim", dependencies: ["Opus"]),
         .target(name: "PocketOpus", dependencies: ["Opus", "COpusShim", "PocketCore"]),
+        .target(name: "PocketPush"),
         .testTarget(name: "PocketCoreTests", dependencies: ["PocketCore"]),
+        .testTarget(name: "PocketPushTests", dependencies: ["PocketPush"]),
         .testTarget(name: "PocketOpusTests", dependencies: ["PocketOpus", "PocketCore"]),
     ]
 )

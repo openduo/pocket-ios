@@ -20,12 +20,21 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         ArrivalMonitor.shared.start(relaunchedForLocation: opts?[.location] != nil)
         // Registration must finish before launch ends (BGTaskScheduler requirement).
         AnswerRefresh.register()
+        PushRegistrar.shared.start()
         MetricsLog.shared.start()
         #if DEBUG
         Demo.runAmbientProbe()
         Demo.runPlaybackProbe()
         #endif
         return true
+    }
+
+    func application(_ app: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken token: Data) {
+        PushRegistrar.shared.tokenReceived(token)
+    }
+
+    func application(_ app: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        AppLog.shared.log("apns_register_failed", ["err": "\(error)"])
     }
 
     /// Info.plist lists landscape for the foldable; every other iPhone stays portrait.
@@ -98,7 +107,10 @@ struct PocketApp: App {
             if p == .active { Tailnet.shared.rebind() }
             if p == .active { PocketEngine.shared.appBecameActive() }
             if p == .active { AmbientController.shared.appBecameActive() }
-            if p == .active { AnswerNotice.requestPermissionIfUndecided(); AnswerNotice.withdrawAll() }
+            if p == .active {
+                AnswerNotice.requestPermissionIfUndecided()
+                AnswerNotice.withdrawAll(cursor: ConversationStore.shared.cursor())
+            }
             // Also when the extension could not open the app and the user did.
             if p == .active { model.importShares() }
             if p == .active || p == .background { AmbientController.shared.audioWantChanged(name) }
@@ -135,7 +147,7 @@ private struct HingeProbe: ViewModifier {
     }
 }
 
-/// Background App Refresh catch-up (the app has no push notifications): when iOS grants a
+/// Background App Refresh catch-up (push covers channels that send it): when iOS grants a
 /// refresh, read the rows above the cursor (`GET /api/imlog?since=`) and forward the newest answer
 /// the Passport has not had. iOS decides
 /// when (and whether) it runs; the request asks for no earliest time, so there is no interval
@@ -170,6 +182,9 @@ enum AnswerRefresh {
             AppLog.shared.log("bg_refresh_expired")
             task.setTaskCompleted(success: false)
         }
+        // The grant ages out unless renewed; a refresh is the one chance a phone that is never
+        // opened gets.
+        PushRegistrar.shared.refresh("bg_refresh")
         PocketEngine.shared.fetchMissed("bg_refresh") { ok in
             guard once.claim() else { return }
             task.setTaskCompleted(success: ok)

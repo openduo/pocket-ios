@@ -442,7 +442,8 @@ final class PocketEngine: @unchecked Sendable {
                 saveReplyMemory()
                 if !AppPhase.isActive, lastNotifiedReply != id {
                     lastNotifiedReply = id
-                    AnswerNotice.post(replyID: id, text: text, silent: linked)
+                    let messages = tracker.memory.lastAnswer.flatMap { $0.replyID == id ? $0.messages : nil } ?? []
+                    AnswerNotice.post(replyID: id, text: text, messageIDs: messages, silent: linked)
                 }
             case .reply:
                 // A partial may take a new id; the counter must not go back after a relaunch.
@@ -513,6 +514,8 @@ final class PocketEngine: @unchecked Sendable {
                 tracker.forgetDelivered()
             }
             deliver(tracker.rows(rows), source: replayed ? "replay" : "ready")
+            // The channel is reachable now: a registration that failed for lack of it runs again.
+            PushRegistrar.shared.registerIfPending("live_ready")
             return
         case .cleaned, .failed:
             settleResults(event!)

@@ -165,6 +165,40 @@
         }
       }
     },
+    "PUSH_PLACEHOLDER": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "DuoDuo sent you a message"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "多多发来一条消息"
+          }
+        }
+      }
+    },
+    "PUSH_TITLE": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "DuoDuo"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "多多"
+          }
+        }
+      }
+    },
     "Passport 已不认这部手机：在「设置 › 蓝牙」里忽略它，再在设备上重新配对": {
       "localizations": {
         "en": {

@@ -187,6 +187,7 @@ final class AppModel: ObservableObject {
         SessionViewer.shared.reset()
         AppLog.shared.log("paired", ["scope": d.scope.rawValue])
         save(s)
+        PushRegistrar.shared.paired()
     }
 
     // MARK: try-it mode
