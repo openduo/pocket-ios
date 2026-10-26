@@ -239,9 +239,9 @@ final class AmbientController: @unchecked Sendable {
 
     private func startAudio() {
         do {
-            try VoiceIO.shared.startAmbient { [weak self] packets in
+            try VoiceIO.shared.startAmbient { [weak self] framed in
                 // Engine thread → our queue; one hop per capture block.
-                self?.queue.async { self?.uplink(packets) }
+                self?.queue.async { self?.uplink(framed) }
             }
             edge.aec = VoiceIO.shared.voiceProcessing
             decoder = try? OpusVoiceDecoder()
@@ -458,10 +458,10 @@ final class AmbientController: @unchecked Sendable {
         PocketEngine.shared.ensureLive("ambient_resume")
     }
 
-    private func uplink(_ packets: [Data]) {
+    private func uplink(_ framed: Data) {
         guard on, !linkPaused else { return }
         if !edge.capturing { perform(edge.packetEncoded()) }
-        if edge.sendsAudio, live.isOpen { live.send(packets: packets) }
+        if edge.sendsAudio, live.isOpen { live.send(framed: framed) }
     }
 
     // MARK: socket

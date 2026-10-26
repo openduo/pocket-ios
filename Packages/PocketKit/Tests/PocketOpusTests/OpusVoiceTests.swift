@@ -39,4 +39,22 @@ final class OpusVoiceTests: XCTestCase {
         let body = try VoiceNote(source: .phone, packets: packets).body()
         XCTAssertEqual(try VoiceNote.packets(fromBody: body), packets)
     }
+
+    func testFramedPushMatchesPacketsBehindTheirLengths() throws {
+        let pcm = tone(16000)
+        let a = try OpusVoiceEncoder(), b = try OpusVoiceEncoder()
+        var expected = Data(), framed = Data()
+        var count = 0
+        var i = 0
+        for chunk in [100, 1000, 333, 7000, 7567] {
+            let part = Array(pcm[i..<(i + chunk)])
+            for p in try a.push(part) {
+                expected.append(UInt8(p.count >> 8)); expected.append(UInt8(p.count & 0xff)); expected.append(p)
+            }
+            count += try part.withUnsafeBufferPointer { try b.push($0, framedInto: &framed) }
+            i += chunk
+        }
+        XCTAssertEqual(count, 50)
+        XCTAssertEqual(framed, expected)
+    }
 }

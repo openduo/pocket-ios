@@ -44,7 +44,10 @@ final class VoiceIO: @unchecked Sendable {
     private var noteEncoder: OpusVoiceEncoder?
     private var notePackets: [Data] = []
     private var ambientEncoder: OpusVoiceEncoder?
-    private var ambientSink: (([Data]) -> Void)?
+    /// Gets each capture block's packets, framed as `/live` sends them.
+    private var ambientSink: ((Data) -> Void)?
+    /// The converter's output, reused for every tap block; only the tap's thread touches it.
+    private var converted: AVAudioPCMBuffer?
     /// Whether ambient capture is encoded: only while the room's connection is open, so a phone
     /// that cannot reach the room does not spend the encoder on packets nobody receives.
     private var ambientEncoding = false
@@ -412,7 +415,15 @@ final class VoiceIO: @unchecked Sendable {
         guard let conv else { return }
         let ratio = target.sampleRate / buf.format.sampleRate
         let cap = AVAudioFrameCount(Double(buf.frameLength) * ratio) + 1
-        guard let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: cap) else { return }
+        let out: AVAudioPCMBuffer
+        if let c = converted, c.frameCapacity >= cap, c.format == target {
+            out = c
+            out.frameLength = 0
+        } else {
+            guard let c = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: cap) else { return }
+            converted = c
+            out = c
+        }
         var fed = false
         var err: NSError?
         conv.convert(to: out, error: &err) { _, status in
@@ -444,8 +455,9 @@ final class VoiceIO: @unchecked Sendable {
             if noteEncoder === noteEnc { notePackets.append(contentsOf: packets) }
             lock.unlock()
         }
-        if let ambEnc, let sink, let packets = try? ambEnc.push(samples), !packets.isEmpty {
-            sink(packets)
+        if let ambEnc, let sink {
+            var framed = Data()
+            if let n = try? ambEnc.push(samples, framedInto: &framed), n > 0 { sink(framed) }
         }
     }
 
@@ -504,7 +516,7 @@ final class VoiceIO: @unchecked Sendable {
         lock.unlock()
     }
 
-    func startAmbient(_ sink: @escaping ([Data]) -> Void) throws {
+    func startAmbient(_ sink: @escaping (Data) -> Void) throws {
         guard Self.permission == .granted else { throw Failure.permissionDenied }
         let enc: OpusVoiceEncoder
         do { enc = try OpusVoiceEncoder() } catch { throw Failure.opus("\(error)") }
