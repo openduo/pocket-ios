@@ -46,6 +46,8 @@ probes on an iPhone XS Max and the Passport during development.
 | Session drawer width | 82 % of the screen, at most 340 pt | display | the room behind stays visible as the way back |
 | `SessionDrawer.foldAfter` | 5 rows per group | display, **user decision** | the session list folds each group after this many rows behind 「更多」 so both groups stay in view; set by the user, not measured |
 | `SessionThreadView.swipeToClose` / `pullToClose` | 160 pt predicted / 90 pt past the top | display, **no data** | iPhone Duo session pane: a swipe toward the edge the pane leaves by closes it; tuned by hand on the iPhone Duo simulator (docs/design/iphone-duo.md) |
+| `PaneLevel.slideSeconds` | 0.35 s | display, **no data** | iPhone Duo pane: how long the strip slides between room, list and session; a session's rows are drawn once the slide has finished, the loading mark stands in until then; tuned by hand on the iPhone Duo |
+| `SideScreen.paneShare` | 0.4 of the width | display, **no data** | iPhone Duo open flat in landscape: the pane's share; 多多 keeps 0.6, about 570 pt of 951, a little wider than the 466 pt outer display so reading stays on the trailing side. As a book the system gives each side its half of the fold instead |
 | Room fold handle | 60 pt drag; the room never shorter than 120 pt | display, **no data** | iPhone Duo open flat in portrait: folds the room into its band; tuned by hand as above |
 | `AmbientControl` label | shrinks to 0.5 of its size, 4 pt apart from its neighbours | display, **no data** | the round controls' labels share the row evenly; at the largest text sizes a label shrinks in its column instead of being cut, so the four tent controls stay readable beside the mark; tuned by hand on the iPhone Duo simulator at Accessibility XXXL |
 | `LogoMark` margin | 0.7 of the frame | display | the outer ring of the frame is left to the halo |
@@ -79,7 +81,7 @@ probes on an iPhone XS Max and the Passport during development.
 | Cache retention | everything | — | decision Q13 |
 | `ThreadBuilder.separatorGap` | 10 min | display | design §4.3 |
 | `ThreadBuilder.heardRunVisible` | 3 rows | display | decision Q6: runs longer than 3 fold |
-| `AppModel.refreshSeconds` | 1 s | display | device and tailnet rows and the Tailscale login poll, while visible; one in-process status call per tick, and views redraw only when a value changed. The ambient view's clock has its own once-a-minute timeline |
+| `AppModel.refreshSeconds` | 1 s | display | the Tailscale login page's check for a finished login, only while that page is open. The device and tailnet rows are pushed when they change (tsbridge watches the node's state; the engine reports its snapshot), nothing polls them. The ambient view's clock has its own once-a-minute timeline |
 | `LevelTrail.interval` / `count` | 50 ms / 48 samples | display | meters sample the mic level only while visible and active; per audio frame the engine only updates one number |
 | Meter attack/decay | ×6 gain, 0.82 / 0.18 | display | the web edge's meter (`capture.js`) |
 | `Composer.photoJPEGQuality` | 0.9 | fixed, **no data** | HEIC and camera photos become JPEG because the channel renders only PNG/JPEG/GIF/WebP inline; 0.9 is visually lossless for photos |

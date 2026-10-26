@@ -30,11 +30,11 @@ final class SessionViewer: ObservableObject {
     func notify(_ text: String) { mutate { $0.notify(text, id: UUID().uuidString) } }
     func clearNotifyOutcome() { mutate { $0.clearNotifyOutcome(); return nil } }
 
+    /// From an opened session back to the list (the foldable's pane).
+    func backToList() { mutate { $0.backToList() } }
+
     /// Back to the room thread: the session and the drawer close.
-    func showRoom() {
-        mutate { $0.closeSession() }
-        mutate { $0.closeDrawer() }
-    }
+    func showRoom() { mutate { $0.showRoom() } }
 
     private func mutate(_ f: (inout SessionViewerState) -> [String: Any]?) {
         var s = state
@@ -79,5 +79,5 @@ final class SessionViewer: ObservableObject {
     }
 
     /// Pairing changed or the device lost its scope: nothing of the old view stays.
-    func reset() { showRoom() }
+    func reset() { mutate { $0.reset() } }
 }

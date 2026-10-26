@@ -70,7 +70,7 @@ extension AppModel {
     var roomStatus: String {
         if ambient.isOn { return ambientTitle }
         if chat.working != nil { return presence.subtitle }
-        return device.link == .ready ? String(localized: "按住 Passport 说话") : String(localized: "环境模式关着")
+        return device.link == .ready ? String(localized: "按住 Passport 说话") : String(localized: "环境模式已关")
     }
 
     /// The large text: what is being said, the current step, or the last answer.

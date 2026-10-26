@@ -4,9 +4,9 @@
 import PocketCore
 import SwiftUI
 
-/// The foldable's layouts other than the phone column (docs/design/iphone-duo.md). One order holds
-/// in all of them: the room, then 多多, then an opened session. Opening a session pushes 多多 away
-/// from it: right in landscape, up in portrait.
+/// The foldable's layouts other than the phone column (docs/design/iphone-duo.md). Open flat, 多多
+/// keeps its place (trailing in landscape, below in portrait) and a pane beside it shows the room,
+/// the session list or an opened session.
 @available(iOS 27.1, *)
 struct DuoScreen: View {
     let layout: DuoLayout
@@ -15,7 +15,7 @@ struct DuoScreen: View {
 
     var body: some View {
         switch layout {
-        case .side(let split): SideScreen(split: split, viewer: viewer, sheet: $sheet)
+        case .side: SideScreen(viewer: viewer, sheet: $sheet)
         case .stacked(let top, let gap): StackedScreen(top: top, gap: gap, viewer: viewer, sheet: $sheet)
         case .tabletop(let top, let gap): TabletopScreen(top: top, gap: gap, viewer: viewer, sheet: $sheet)
         case .tent, .phone: TentScreen()
@@ -23,55 +23,46 @@ struct DuoScreen: View {
     }
 }
 
-/// Open flat or as a book, landscape: 多多 beside the room. A session opens on the leading side
-/// and pushes 多多 into the room's place. With ambient off there is no room and 多多 takes the
-/// width. The bar sits on the trailing vertical strip.
+/// Open flat or as a book, landscape: the pane on the leading side, 多多 on the trailing side as
+/// on the outer display. The pane shows the room, the session list or an opened session; 多多
+/// never moves. The bar sits on the trailing vertical strip.
+///
+/// The system arranges the two: as a book each takes one side of the fold, so 多多 keeps the outer
+/// display's width; opening flat widens it to its share and plays the system's opening effect.
 @available(iOS 27.1, *)
 private struct SideScreen: View {
     @EnvironmentObject var model: AppModel
-    let split: CGFloat
     @ObservedObject var viewer: SessionViewer
     @Binding var sheet: ConversationView.Sheet?
     @State private var bar = BarLayout()
 
     var body: some View {
         NavigationStack {
-            GeometryReader { g in
-                let open = viewer.state.openKey != nil
-                // The room stays beside 多多 with ambient off too: the mark and the last answer.
-                let room = !open
-                HStack(spacing: 0) {
-                    if open {
-                        SessionPane(viewer: viewer, exit: .leading)
-                            .frame(width: split)
-                            .transition(.move(edge: .leading))
-                    }
-                    ThreadColumn(sheet: $sheet)
-                        .frame(width: open ? g.size.width - split : (room ? split : g.size.width))
-                    if room {
-                        RoomColumn()
-                            .frame(width: g.size.width - split)
-                            .transition(.move(edge: .trailing))
-                    }
-                }
-                .clipped()
+            ArrangementView {
+                PaneStack(viewer: viewer) { RoomColumn() }
+                    .splitArrangementLayoutRatio(Self.paneShare)
+            } secondary: {
+                ThreadColumn(sheet: $sheet)
             }
+            .arrangementViewStyle(.split)
             .background(Palette.background.ignoresSafeArea())
-            .animation(.smooth(duration: 0.4), value: viewer.state.openKey)
-            .animation(.snappy, value: model.ambient.isOn)
-            .toolbar { NavBar(viewer: viewer, sheet: $sheet, bar: $bar, showsTitle: false, roomDrawn: viewer.state.openKey == nil) }
+            .toolbar {
+                NavBar(viewer: viewer, sheet: $sheet, bar: $bar, showsTitle: false, roomDrawn: PaneLevel(viewer.state) == .room,
+                       paneList: { viewer.paneBack() })
+            }
             .toolbar(removing: .title)
             .modifier(BarTitle())
         }
-        .overlay { if viewer.state.drawerOpen { LeftDrawer(viewer: viewer) } }
-        .animation(.easeOut(duration: 0.2), value: viewer.state.drawerOpen)
     }
+
+    /// The pane's share of the width open flat; 多多 keeps the rest, a little more than the outer
+    /// display. Display only (docs/constants.md).
+    private static let paneShare: CGFloat = 0.4
 }
 
-/// Open flat, portrait: the room above 多多 while ambient is on, pushed up into a band by the
-/// handle. A session rises from the bottom, pushes 多多 into the top half and folds the room into
-/// its band. The keyboard covers the session rather than squeezing both halves: the composer sits
-/// at the fold, above it.
+/// Open flat, portrait: the pane above 多多, which stays below. The pane shows the room while
+/// ambient is on (pushed up into a band by the handle), the session list or an opened session; with
+/// ambient off and nothing opened there is no pane and 多多 takes the screen.
 @available(iOS 27.1, *)
 private struct StackedScreen: View {
     @EnvironmentObject var model: AppModel
@@ -82,54 +73,56 @@ private struct StackedScreen: View {
     @State private var bar = BarLayout()
     @State private var collapsed = false
     @State private var drag: CGFloat = 0
-    @Environment(\.verticalBarInset) private var verticalBarInset
 
     var body: some View {
         NavigationStack {
             GeometryReader { g in
                 // The fold stays where it is below the navigation bar.
                 let upper = max(0, top - g.frame(in: .named(Self.space)).minY)
-                let lower = max(0, g.size.height - upper - gap)
-                let open = viewer.state.openKey != nil
+                let level = PaneLevel(viewer.state)
                 let on = model.ambient.isOn
                 VStack(spacing: 0) {
-                    if on, open || collapsed {
-                        RoomBand().transition(.move(edge: .top).combined(with: .opacity))
-                        if !open { RoomHandle(collapsed: $collapsed, drag: $drag) }
-                    } else if on {
-                        BigRoom().frame(height: max(Self.minimumRoom, upper + min(0, drag)))
-                        Color.clear.frame(height: gap)
-                        RoomHandle(collapsed: $collapsed, drag: $drag)
-                        RoomControls().padding(.bottom, 4)
+                    if on || level != .room {
+                        PaneStack(viewer: viewer) {
+                            VStack(spacing: 0) {
+                                if collapsed {
+                                    RoomBand()
+                                    RoomHandle(collapsed: $collapsed, drag: $drag)
+                                } else {
+                                    BigRoom().frame(height: max(Self.minimumRoom, upper + min(0, drag)))
+                                    Color.clear.frame(height: gap)
+                                    RoomHandle(collapsed: $collapsed, drag: $drag)
+                                    RoomControls().padding(.bottom, 4)
+                                }
+                            }
+                        }
+                        // The list and a session fill the upper half; the room sizes itself.
+                        .frame(height: level == .room ? nil : upper)
+                        if level != .room { Color.clear.frame(height: gap) }
                     }
-                    // With the room above it, the same fold treatment as tabletop: a hairline,
-                    // and rows scroll out softly under it instead of being cut at the controls.
+                    // With a pane above it, the same fold treatment as tabletop: a hairline, and
+                    // rows scroll out softly under it instead of being cut.
+                    let pane = on || level != .room
                     ThreadColumn(sheet: $sheet)
                         .safeAreaBar(edge: .top, spacing: 0) {
-                            if on { Rectangle().fill(Palette.hairline).frame(height: 0.5) }
+                            if pane { Rectangle().fill(Palette.hairline).frame(height: 0.5) }
                         }
-                        .scrollEdgeEffectStyle(on ? .soft : .automatic, for: .top)
+                        .scrollEdgeEffectStyle(pane ? .soft : .automatic, for: .top)
                         .clipped()
-                    if open {
-                        Color.clear.frame(height: gap)
-                        // The vertical bar has no title to name the session, so the pane does.
-                        SessionPane(viewer: viewer, exit: .bottom, header: verticalBarInset != nil)
-                            .frame(height: lower)
-                            .transition(.move(edge: .bottom))
-                    }
                 }
-                .ignoresSafeArea(.keyboard, edges: open ? .bottom : [])
-                .overlay(alignment: .bottom) { if viewer.state.drawerOpen { BottomDrawer(viewer: viewer, height: lower) } }
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).midX } action: { bar.centerX = $0 }
             }
             .background(Palette.background.ignoresSafeArea())
-            .animation(.smooth(duration: 0.4), value: viewer.state.openKey)
             .animation(.snappy, value: collapsed)
             .animation(.snappy, value: model.ambient.isOn)
-            .animation(.snappy, value: viewer.state.drawerOpen)
+            // The pane takes the upper half for the list and a session; the room sizes itself.
+            .animation(PaneLevel.slide, value: PaneLevel(viewer.state))
             .navigationTitle(String(localized: "多多"))
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { NavBar(viewer: viewer, sheet: $sheet, bar: $bar, sessionInBar: true, roomDrawn: model.ambient.isOn) }
+            .toolbar {
+                NavBar(viewer: viewer, sheet: $sheet, bar: $bar, roomDrawn: model.ambient.isOn && PaneLevel(viewer.state) == .room,
+                       paneList: { viewer.paneBack() })
+            }
             .modifier(BarTitle(opaque: true))
         }
         .coordinateSpace(.named(Self.space))
@@ -138,6 +131,102 @@ private struct StackedScreen: View {
     private static let space = "stacked"
     /// The room never drags shorter than this before it folds into the band. Display only.
     private static let minimumRoom: CGFloat = 120
+}
+
+/// What the foldable's pane shows: the room, the session list or an opened session, one level
+/// deeper each.
+enum PaneLevel: Int, Comparable {
+    case room, list, session
+
+    init(_ s: SessionViewerState) {
+        self = s.openKey != nil ? .session : (s.drawerOpen ? .list : .room)
+    }
+
+    static func < (a: PaneLevel, b: PaneLevel) -> Bool { a.rawValue < b.rawValue }
+
+    /// How the pane moves between levels.
+    static var slide: Animation { .smooth(duration: slideSeconds) }
+    static let slideSeconds = 0.35
+}
+
+/// The foldable's pane beside 多多: the room, the session list or a session, side by side on one
+/// strip with deeper levels toward 多多 (trailing), as a phone pushes a page in from the right.
+/// The strip slides to the level shown and going back reverses it; only the pane moves, 多多 does
+/// not. The levels are fixed places, not views inserted and removed: there is no transition to
+/// interrupt and nothing left behind over the shown level.
+@available(iOS 27.1, *)
+private struct PaneStack<Room: View>: View {
+    @ObservedObject var viewer: SessionViewer
+    @ViewBuilder var room: Room
+    /// The session whose slide in has finished. Its rows are drawn from then on; while it slides
+    /// in the pane shows the loading mark, so rows arriving meanwhile are not laid out mid-motion.
+    @State private var settled: String?
+
+    var body: some View {
+        let level = PaneLevel(viewer.state)
+        let st = viewer.state
+        GeometryReader { g in
+            ZStack {
+                layer(.room, at: level, width: g.size.width) { room }
+                layer(.list, at: level, width: g.size.width) { ListPane(viewer: viewer) }
+                layer(.session, at: level, width: g.size.width) {
+                    // A closed session's rows stay until the next one opens (`backToList`): the
+                    // pane slides them out as they were, and nothing is torn down while it moves.
+                    if st.shownKey != nil {
+                        // A closed session keeps its rows on the way out.
+                        SessionPane(viewer: viewer, exit: .trailing, back: { viewer.paneBack() },
+                                    showsRows: st.openKey == nil || settled == st.openKey)
+                            .environment(\.narrowPane, true)
+                    }
+                }
+            }
+        }
+        // Cut the neighbouring levels at the sides only: backgrounds and rows run on under the
+        // home indicator and the status bar, as 多多 does beside them.
+        .mask { Rectangle().ignoresSafeArea(edges: .vertical) }
+        .animation(PaneLevel.slide, value: level)
+        .onAppear { settled = st.openKey }
+        .onChange(of: st.openKey) { _, key in
+            guard let key else { return }
+            settled = nil
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(PaneLevel.slideSeconds))
+                guard viewer.state.openKey == key else { return }
+                withAnimation { settled = key }
+            }
+        }
+    }
+
+    /// One level's place on the strip. Every level stays built, so a move only slides the strip;
+    /// a level off screen is marked so its animations pause.
+    private func layer<C: View>(_ rank: PaneLevel, at level: PaneLevel, width: CGFloat,
+                                @ViewBuilder content: () -> C) -> some View {
+        content()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .offset(x: CGFloat(rank.rawValue - level.rawValue) * width)
+            .allowsHitTesting(rank == level)
+            .accessibilityHidden(rank != level)
+            .environment(\.offstage, rank != level)
+    }
+}
+
+extension SessionViewer {
+    /// Back from a session in the foldable's pane to the list.
+    func paneBack() {
+        withAnimation(PaneLevel.slide) { backToList() }
+    }
+}
+
+/// The session list in the foldable's pane. It is the pane's list root: no ‹; the room row, the
+/// sessions button and a swipe back toward the outer edge return to the room.
+@available(iOS 27.1, *)
+private struct ListPane: View {
+    @ObservedObject var viewer: SessionViewer
+
+    var body: some View {
+        SessionDrawer(viewer: viewer, inPane: true)
+            .modifier(SwipeBack(action: { viewer.showRoom() }))
+    }
 }
 
 /// Half-folded on a surface: the upright half only displays the room; everything touched is in
@@ -176,7 +265,7 @@ private struct TabletopScreen: View {
                         ThreadColumn(sheet: $sheet).transition(.move(edge: .top))
                     }
                 }
-                .overlay(alignment: .bottom) { if viewer.state.drawerOpen { BottomDrawer(viewer: viewer, height: g.size.height) } }
+                .overlay(alignment: .bottom) { BottomDrawer(viewer: viewer, height: g.size.height) }
             }
             // The fold between the room and the conversation: a hairline, and rows scroll out
             // softly under it instead of being cut at the controls.
@@ -219,28 +308,32 @@ private struct SessionPane: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject var viewer: SessionViewer
     var exit: Edge
+    /// Where ‹ and the swipe go: the room thread unless given.
+    var back: (() -> Void)?
+    /// Off while the pane slides the session in: the loading mark stands in for the rows.
+    var showsRows = true
     /// Off where the navigation bar already names the session.
     var header: Bool = false
 
     var body: some View {
-        let close = { viewer.closeSession() }
+        let close = back ?? { viewer.closeSession() }
         VStack(spacing: 0) {
             if exit == .bottom {
                 Capsule().fill(Palette.placeholder).frame(width: 44, height: 5)
                     .frame(maxWidth: .infinity).padding(.vertical, 8)
                     .accessibilityHidden(true)
             }
-            if header || exit == .leading {
+            if header || exit == .trailing {
                 HStack(spacing: 12) {
-                    if exit == .leading {
+                    if exit == .trailing {
                         // The same glass button as the navigation bar's back.
-                        Button { withAnimation(.smooth(duration: 0.4)) { close() } } label: {
+                        Button(action: close) {
                             Image(systemName: "chevron.left").font(.body.weight(.medium)).frame(width: 30, height: 30)
                         }
                         .buttonStyle(.glass)
                         .buttonBorderShape(.circle)
                         .tint(Palette.text)
-                        .accessibilityLabel(String(localized: "回到房间"))
+                        .accessibilityLabel(back == nil ? String(localized: "回到房间") : String(localized: "回到会话列表"))
                     }
                     SessionTitle(viewer: viewer).fixedSize()
                     Spacer(minLength: 0)
@@ -248,10 +341,11 @@ private struct SessionPane: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
             }
-            SessionThreadView(viewer: viewer,
-                              onSwipeLeading: exit == .leading ? close : nil,
+            SessionThreadView(viewer: viewer, showsRows: showsRows,
+                              onSwipeBack: exit == .trailing ? close : nil,
                               onPullDown: exit == .bottom ? close : nil)
-            if model.notifyEnabled, let s = viewer.state.openSession, s.notify {
+            // The shown session: closing slides the pane out as it was, the bar included.
+            if model.notifyEnabled, let s = viewer.state.shownSession, s.notify {
                 NotifyBar(viewer: viewer, session: s)
             }
         }
@@ -259,8 +353,9 @@ private struct SessionPane: View {
     }
 }
 
-/// The session list rising from the bottom over the lower half; picking a row opens the session
-/// in its place. The dimmed rest closes it.
+/// The session list rising from the bottom over the lower half while the drawer is open; picking
+/// a row opens the session in its place. The list rises; the dimming fades in place, and a tap on
+/// it closes the drawer.
 @available(iOS 27.1, *)
 private struct BottomDrawer: View {
     @ObservedObject var viewer: SessionViewer
@@ -268,16 +363,17 @@ private struct BottomDrawer: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            Color.black.opacity(0.18).ignoresSafeArea()
-                .onTapGesture { viewer.closeDrawer() }
-                .accessibilityAddTraits(.isButton)
-                .accessibilityLabel(String(localized: "关闭会话列表"))
-            SessionDrawer(viewer: viewer)
-                .frame(height: height)
-                .clipShape(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28, style: .continuous))
-                .shadow(color: .black.opacity(0.15), radius: 12, y: -4)
+            if viewer.state.drawerOpen {
+                DrawerScrim(viewer: viewer, opacity: 0.18)
+                SessionDrawer(viewer: viewer)
+                    .frame(height: height)
+                    .clipShape(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28, style: .continuous))
+                    .shadow(color: .black.opacity(0.15), radius: 12, y: -4)
+                    .transition(.move(edge: .bottom))
+            }
         }
-        .transition(.move(edge: .bottom))
+        // Closed, the overlay is empty and lets every touch through.
+        .allowsHitTesting(viewer.state.drawerOpen)
     }
 }
 

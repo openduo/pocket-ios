@@ -41,10 +41,6 @@ struct ConversationView: View {
         .background {
             if #available(iOS 27.1, *) { VerticalBarProbe { verticalBar = $0 } }
         }
-        // The 按住说话 bar sits just above the home indicator. Deferring the bottom edge's system
-        // gesture delivers a touch there at once instead of after iOS rules out a home swipe;
-        // the cost is that going home from this screen takes a second swipe.
-        .defersSystemGestures(on: .bottom)
         .sheet(item: $sheet) { s in
             switch s {
             case .settings: SettingsView()
@@ -54,7 +50,7 @@ struct ConversationView: View {
         .fullScreenCover(isPresented: $model.ambientExpanded) { AmbientView() }
         .accessibilityAction(.magicTap) { HoldToggle.shared.magicTap(model) }
         // Losing the scope or the pairing closes the viewer; the room thread stays.
-        .onChange(of: model.sessionsEnabled) { _, on in if !on { viewer.showRoom() } }
+        .onChange(of: model.sessionsEnabled) { _, on in if !on { viewer.reset() } }
         .onAppear {
             #if DEBUG
             sheet = Demo.sheet
@@ -78,6 +74,12 @@ extension EnvironmentValues {
     /// With the system's vertical bar at the trailing edge: the window's top inset, without the
     /// navigation bar's height. The navigation items go into the vertical bar. Nil without one.
     @Entry var verticalBarInset: CGFloat?
+    /// A level of the foldable's pane that is built but off screen: its animations pause.
+    @Entry var offstage = false
+    /// Inside the foldable's narrow pane: rows drop the reserve a phone keeps beside them.
+    @Entry var narrowPane = false
+    /// Where a 多多 bubble's 回复 goes; a plain reference, so reading it observes nothing.
+    @Entry var replyTarget: AppModel?
 }
 
 /// The live mark stands for the title in the vertical bar, so the top keeps no title band.
@@ -212,7 +214,7 @@ private struct PhoneScreen: View {
                     SessionPage(viewer: viewer)
                 }
         }
-        .overlay { if viewer.state.drawerOpen { LeftDrawer(viewer: viewer) } }
+        .overlay { LeftDrawer(viewer: viewer) }
         .animation(.easeOut(duration: 0.2), value: viewer.state.drawerOpen)
     }
 }
@@ -242,8 +244,9 @@ struct SessionTitle: View {
     @ObservedObject var viewer: SessionViewer
 
     var body: some View {
-        let s = viewer.state.openSession
-        let name = s?.name ?? viewer.state.openKey ?? ""
+        // The shown session: in the foldable's pane a closed one keeps its title on the way out.
+        let s = viewer.state.shownSession
+        let name = s?.name ?? viewer.state.shownKey ?? ""
         let sub = s?.running == true ? String(localized: "只读 · 正在运行") : String(localized: "只读")
         VStack(spacing: 0) {
             Text(name).font(.headline).foregroundStyle(Palette.text).lineLimit(1)
@@ -254,29 +257,45 @@ struct SessionTitle: View {
     }
 }
 
-/// The session list over the screen from the leading edge; the dimmed side closes it.
+/// The session list over the screen from the leading edge while the drawer is open; the dimmed
+/// side closes it. The list slides in; the dimming fades in place over the whole screen.
 struct LeftDrawer: View {
     @ObservedObject var viewer: SessionViewer
 
     var body: some View {
         GeometryReader { g in
             ZStack(alignment: .leading) {
-                Color.black.opacity(0.3).ignoresSafeArea()
-                    .onTapGesture { viewer.closeDrawer() }
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityLabel(String(localized: "关闭会话列表"))
-                SessionDrawer(viewer: viewer)
-                    .frame(width: min(g.size.width * Self.share, Self.maxWidth))
-                    .shadow(color: .black.opacity(0.15), radius: 12, x: 4)
+                if viewer.state.drawerOpen {
+                    DrawerScrim(viewer: viewer, opacity: 0.3)
+                    SessionDrawer(viewer: viewer)
+                        .frame(width: min(g.size.width * Self.share, Self.maxWidth))
+                        .shadow(color: .black.opacity(0.15), radius: 12, x: 4)
+                        .transition(.move(edge: .leading))
+                }
             }
         }
-        .transition(.move(edge: .leading).combined(with: .opacity))
+        // Closed, the overlay is empty and lets every touch through.
+        .allowsHitTesting(viewer.state.drawerOpen)
     }
 
     /// Drawer width: this share of the screen, up to the max, so the room behind stays visible
     /// as the way back. Display only.
     static let share: CGFloat = 0.82
     static let maxWidth: CGFloat = 340
+}
+
+/// The dimming behind a session drawer: fades in place, and a tap closes the drawer.
+struct DrawerScrim: View {
+    @ObservedObject var viewer: SessionViewer
+    var opacity: Double
+
+    var body: some View {
+        Color.black.opacity(opacity).ignoresSafeArea()
+            .onTapGesture { viewer.closeDrawer() }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel(String(localized: "关闭会话列表"))
+            .transition(.opacity)
+    }
 }
 
 // MARK: nav bar
@@ -308,23 +327,28 @@ struct NavBar: ToolbarContent {
     @ObservedObject var viewer: SessionViewer
     @Binding var sheet: ConversationView.Sheet?
     @Binding var bar: BarLayout
-    /// Open flat in portrait the session opens below 多多 and the bar names it, with the way back.
-    var sessionInBar = false
     /// Landscape on the foldable puts the bar on the trailing strip; the title would only leave an
     /// empty band at the top.
     var showsTitle = true
     /// The layout draws the room with its own mark and ambient controls; the bar leaves both out,
     /// so each appears once.
     var roomDrawn = false
-
-    /// The opened session, when the bar names it.
-    private var session: (name: String, running: Bool)? {
-        guard sessionInBar, let key = viewer.state.openKey else { return nil }
-        let s = viewer.state.openSession
-        return (s?.name ?? key, s?.running ?? false)
-    }
+    /// The foldable's pane: from a session the sessions button goes back to the list; nil elsewhere.
+    var paneList: (() -> Void)?
 
     @Environment(\.verticalBarInset) private var verticalBarInset
+
+    /// The sessions button opens the list. In the foldable's pane it goes up one level each time:
+    /// a session to the list, the list to the room. Elsewhere it returns to the room.
+    private func toggleSessions() {
+        if viewer.state.openKey != nil, let paneList {
+            paneList()
+        } else if viewer.state.drawerOpen || viewer.state.openKey != nil {
+            viewer.showRoom()
+        } else {
+            viewer.openDrawer()
+        }
+    }
 
     var body: some ToolbarContent {
         if verticalBarInset != nil {
@@ -337,14 +361,21 @@ struct NavBar: ToolbarContent {
         }
     }
 
-    private var state: (mood: LogoMark.Mood, subtitle: String, live: Bool) {
-        session.map { s in
-            (mood: LogoMark.Mood.idle, subtitle: s.running ? String(localized: "只读 · 正在运行") : String(localized: "只读"), live: s.running)
-        } ?? model.presence
+    private var state: (mood: LogoMark.Mood, subtitle: String, live: Bool) { model.presence }
+
+    /// The sessions button: 会话列表, or 回到房间 while the foldable's pane shows the list or a session.
+    @ViewBuilder private var sessionsButton: some View {
+        let away = viewer.state.drawerOpen || viewer.state.openKey != nil
+        // Filled while the sessions are shown, as a sidebar toggle does.
+        Button { withAnimation(.snappy) { toggleSessions() } } label: {
+            Image(systemName: "sidebar.left").symbolVariant(away ? .fill : .none)
+        }
+        .accessibilityLabel(viewer.state.openKey != nil && paneList != nil ? String(localized: "回到会话列表")
+                            : away ? String(localized: "回到房间") : String(localized: "会话列表"))
     }
 
-    /// The vertical bar: the live mark in place of the title, then every control once. The
-    /// session's name moves into its pane.
+    /// The vertical bar: the live mark in place of the title, then every control once. A
+    /// session's name is in its pane.
     @ViewBuilder private var vertical: some View {
         let p = state
         if !roomDrawn {
@@ -354,13 +385,7 @@ struct NavBar: ToolbarContent {
                 .accessibilityLabel(Text(verbatim: String(localized: "多多") + String(localized: "，") + p.subtitle))
                 .accessibilityAddTraits(.isHeader)
         }
-        if session != nil {
-            Button { withAnimation(.smooth(duration: 0.4)) { viewer.closeSession() } } label: { Image(systemName: "chevron.left") }
-                .accessibilityLabel(String(localized: "回到房间"))
-        } else if model.sessionsEnabled {
-            Button { withAnimation(.snappy) { viewer.openDrawer() } } label: { Image(systemName: "sidebar.left") }
-                .accessibilityLabel(String(localized: "会话列表"))
-        }
+        if model.sessionsEnabled { sessionsButton }
         Button { sheet = .settings } label: { Image(systemName: "gearshape") }
             .accessibilityLabel(String(localized: "设置"))
         Button { sheet = .passport } label: { PassportChip(compact: true) }
@@ -371,13 +396,7 @@ struct NavBar: ToolbarContent {
         let p = state
         ToolbarItem(placement: .topBarLeading) {
             HStack(spacing: 16) {
-                if session != nil {
-                    Button { withAnimation(.smooth(duration: 0.4)) { viewer.closeSession() } } label: { Image(systemName: "chevron.left") }
-                        .accessibilityLabel(String(localized: "回到房间"))
-                } else if model.sessionsEnabled {
-                    Button { withAnimation(.snappy) { viewer.openDrawer() } } label: { Image(systemName: "sidebar.left") }
-                        .accessibilityLabel(String(localized: "会话列表"))
-                }
+                if model.sessionsEnabled { sessionsButton }
                 Button { sheet = .settings } label: { Image(systemName: "gearshape") }
                     .accessibilityLabel(String(localized: "设置"))
             }
@@ -385,7 +404,7 @@ struct NavBar: ToolbarContent {
         }
         if showsTitle { ToolbarItem(placement: .principal) {
             VStack(spacing: 0) {
-                Text(session?.name ?? String(localized: "多多")).font(.headline).foregroundStyle(Palette.text).lineLimit(1)
+                Text(String(localized: "多多")).font(.headline).foregroundStyle(Palette.text).lineLimit(1)
                 // The subtitle row takes its height but no width; the text is drawn over it.
                 subtitle(p.subtitle).frame(width: 1).hidden()
                     .overlay {
@@ -398,7 +417,7 @@ struct NavBar: ToolbarContent {
                     .foregroundStyle(p.live ? Palette.brand : (model.chat.connection == .offline ? Palette.attention : Palette.secondary))
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(Text(verbatim: (session?.name ?? String(localized: "多多")) + String(localized: "，") + p.subtitle))
+            .accessibilityLabel(Text(verbatim: String(localized: "多多") + String(localized: "，") + p.subtitle))
             .accessibilityAddTraits(.isHeader)
         } }
         ToolbarItemGroup(placement: .topBarTrailing) {

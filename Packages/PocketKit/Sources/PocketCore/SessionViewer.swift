@@ -226,6 +226,9 @@ public enum SessionThreadItem: Identifiable, Equatable, Sendable {
 public struct SessionViewerState: Equatable, Sendable {
     public private(set) var drawerOpen = false
     public private(set) var openKey: String?
+    /// The session `items` belongs to: the open one, or in the foldable's pane the one just closed,
+    /// whose rows stay until the next opens (`backToList`).
+    public private(set) var shownKey: String?
     public private(set) var sessions: [SessionSummary] = []
     /// A list arrived since the watch started (an empty list is then "no sessions").
     public private(set) var listed = false
@@ -267,6 +270,7 @@ public struct SessionViewerState: Equatable, Sendable {
     public var chats: [SessionSummary] { sessions.filter { $0.group == .chat }.sorted(by: SessionSummary.byActivity) }
     public var jobs: [SessionSummary] { sessions.filter { $0.group == .job }.sorted(by: SessionSummary.byActivity) }
     public var openSession: SessionSummary? { openKey.flatMap { k in sessions.first { $0.key == k } } }
+    public var shownSession: SessionSummary? { shownKey.flatMap { k in sessions.first { $0.key == k } } }
 
     /// The uplink frame that states the current watch: `sessions_watch` while watching, else
     /// `sessions_unwatch`.
@@ -294,6 +298,7 @@ public struct SessionViewerState: Equatable, Sendable {
         drawerOpen = false
         guard key != openKey else { return nil }
         openKey = key
+        shownKey = key
         items = []
         loaded = false
         return watchFrame
@@ -303,16 +308,49 @@ public struct SessionViewerState: Equatable, Sendable {
     public mutating func closeSession() -> [String: Any]? {
         guard openKey != nil else { return nil }
         openKey = nil
+        shownKey = nil
         items = []
         loaded = false
         return watching ? watchFrame : leave()
     }
 
-    private mutating func leave() -> [String: Any] {
+    /// From the open session back to the list (the foldable's pane): one change, one frame that
+    /// keeps the list watched. The closed session's rows stay (no row for it is applied any more)
+    /// so the pane slides them out as they were and nothing is torn down while it moves; the next
+    /// `open` replaces them.
+    public mutating func backToList() -> [String: Any]? {
+        guard openKey != nil else { return nil }
+        drawerOpen = true
+        openKey = nil
+        return watchFrame
+    }
+
+    /// Back to the room thread from the list or a session: one change. Rows stay as in
+    /// `backToList`.
+    public mutating func showRoom() -> [String: Any]? {
+        guard watching else { return nil }
+        drawerOpen = false
+        openKey = nil
+        return leave()
+    }
+
+    /// Pairing changed or the scope was lost: nothing of the old view stays, the list included.
+    public mutating func reset() -> [String: Any]? {
+        let frame = showRoom()
+        shownKey = nil
+        items = []
+        loaded = false
         sessions = []
         listed = false
         error = nil
-        return watchFrame
+        return frame
+    }
+
+    /// The watch ends. The last list and its error stay: opening it again slides in a list
+    /// already drawn, and the fresh one replaces it in place, instead of the list being built
+    /// mid-slide.
+    private mutating func leave() -> [String: Any] {
+        watchFrame
     }
 
     /// Applies a downlink event; returns whether anything shown changed.

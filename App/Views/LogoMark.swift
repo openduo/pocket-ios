@@ -19,6 +19,8 @@ struct LogoMark: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Off screen (ambient keeps the app running behind the lock screen) the frame timer pauses.
     @Environment(\.scenePhase) private var scene
+    /// Off screen in the foldable's pane: built beside the shown level, not seen.
+    @Environment(\.offstage) private var offstage
     @State private var level = Follower()
 
     /// The fastest motion (the voice bars, under 2 Hz) and the level (a block every 100 ms) read
@@ -30,7 +32,7 @@ struct LogoMark: View {
         if reduceMotion || !mood.animates(on: BatteryPower.shared.source) {
             Drawing(mood: mood, t: 0, level: 0, dark: scheme == .dark)
         } else {
-            TimelineView(.animation(minimumInterval: Self.frameInterval, paused: scene != .active)) { tl in
+            TimelineView(.animation(minimumInterval: Self.frameInterval, paused: scene != .active || offstage)) { tl in
                 let t = tl.date.timeIntervalSinceReferenceDate
                 Drawing(mood: mood, t: t, level: level.step(to: source(), at: t), dark: scheme == .dark)
             }

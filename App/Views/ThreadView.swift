@@ -6,7 +6,7 @@ import SwiftUI
 
 struct ThreadView: View {
     @EnvironmentObject var model: AppModel
-    /// The end of the thread is on screen (or within the rows the lazy stack keeps built).
+    /// The reader is at the end of the thread (`TracksEnd`).
     @State private var atBottom = true
     /// Height of the visible area. The content is at least this tall, rows at its bottom, so the
     /// scroll offset never goes negative: with a negative offset (short thread under a bottom
@@ -18,20 +18,28 @@ struct ThreadView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 6) {
-                    // The try-it room has no earlier days.
-                    if !model.trying { OlderHeader() }
+                    // The try-it room has no earlier days on the server, only in its cache.
+                    if !model.trying || model.chat.hasEarlierCached { OlderHeader() }
                     ForEach(model.chat.rows) { row in
                         RowView(row: row).id(row.id)
                     }
                     Color.clear.frame(height: 1).id(Self.bottomID)
-                        .onAppear { atBottom = true }
-                        .onDisappear { atBottom = false }
+                        .modifier(EndMarker(atBottom: $atBottom))
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
                 .frame(minHeight: viewport, alignment: .bottom)
             }
             .defaultScrollAnchor(.bottom)
+            .modifier(TracksEnd(atBottom: $atBottom))
+            .modifier(FollowsGrowth(following: atBottom) { proxy.scrollTo(Self.bottomID, anchor: .bottom) })
+            .overlay(alignment: .bottomTrailing) {
+                JumpToEnd(shown: !atBottom) {
+                    atBottom = true
+                    withAnimation { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+                }
+            }
+            .environment(\.replyTarget, model)
             .scrollDismissesKeyboard(.interactively)
             // The bottom anchor alone is not enough: when a row changes height, the lazy stack
             // re-estimates rows it has not built and its kept offset can point past them, leaving
@@ -98,8 +106,10 @@ struct OlderHeader: View {
                 .foregroundStyle(Palette.tertiary)
                 .padding(8)
             case .idle:
-                if model.chat.connection == .online, model.chat.hasHistory {
-                    Color.clear.frame(height: 1).onAppear { ConversationStore.shared.loadOlder() }
+                if model.chat.hasEarlierCached || (model.chat.connection == .online && model.chat.hasHistory) {
+                    // A new view each time a day is prepended: a top still on screen asks again.
+                    Color.clear.frame(height: 1).id(model.chat.rows.first?.id)
+                        .onAppear { ConversationStore.shared.loadOlder() }
                 }
             }
         }
@@ -247,7 +257,9 @@ struct MetaLine: View {
 }
 
 struct DuoduoBubble: View {
-    @EnvironmentObject var model: AppModel
+    /// The model for 回复, read without observing it: a bubble redraws (and parses its Markdown)
+    /// only when its own text changes, not on every publish of the model.
+    @Environment(\.replyTarget) private var replyTarget
     var rowID: String
     var text: String
     var at: Date?
@@ -275,8 +287,8 @@ struct DuoduoBubble: View {
                     .background(BubbleShape(mine: false, tail: true).fill(Palette.theirsFill))
                     .contextMenu {
                         Button {
-                            model.voiceInput = false
-                            model.quote = text
+                            replyTarget?.voiceInput = false
+                            replyTarget?.quote = text
                         } label: { Label(String(localized: "回复"), systemImage: "arrowshape.turn.up.left") }
                         // Reads the text this bubble shows; the channel strips its markdown.
                         Button { AmbientController.shared.readAloud(text) } label: {
@@ -539,9 +551,11 @@ struct WorkingBubble: View {
 struct ThinkingDots: View {
     var animate: Bool
     @Environment(\.scenePhase) private var scene
+    @Environment(\.offstage) private var offstage
     var body: some View {
-        // Paused off screen too: ambient keeps the app running behind the lock screen.
-        TimelineView(.animation(minimumInterval: 0.25, paused: !animate || scene != .active)) { ctx in
+        // Paused off screen too: ambient keeps the app running behind the lock screen, and the
+        // foldable's pane keeps levels built beside the one shown.
+        TimelineView(.animation(minimumInterval: 0.25, paused: !animate || scene != .active || offstage)) { ctx in
             let step = animate ? Int(ctx.date.timeIntervalSinceReferenceDate * 4) % 3 : 2
             HStack(spacing: 3) {
                 ForEach(0..<3) { i in
@@ -604,5 +618,91 @@ struct QuoteLine: View {
         }
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityLabel(String(localized: "引用：\(text)"))
+    }
+}
+
+/// Whether the reader is at the end of a bottom-anchored thread, so new rows follow only for a
+/// reader there. Decided where the reader's scroll comes to rest, from the scroll position: rows
+/// that grow do not change it, and a reader one screen up is not at the end even while the lazy
+/// stack still keeps the end row built.
+struct TracksEnd: ViewModifier {
+    @Binding var atBottom: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollPhaseChange { _, phase, context in
+                switch phase {
+                case .interacting:
+                    atBottom = false
+                case .idle:
+                    let g = context.geometry
+                    let end = g.contentSize.height + g.contentInsets.bottom - g.containerSize.height
+                    // Within a point of the end: offsets settle on fractional values.
+                    atBottom = g.contentOffset.y >= end - 1
+                default:
+                    break
+                }
+            }
+        } else {
+            content
+        }
+    }
+}
+
+/// Before iOS 18 there is no scroll phase: the end row's presence stands in for it.
+struct EndMarker: ViewModifier {
+    @Binding var atBottom: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content
+        } else {
+            content.onAppear { atBottom = true }.onDisappear { atBottom = false }
+        }
+    }
+}
+
+/// Calls `scroll` whenever the content's height changes while `following`.
+struct FollowsGrowth: ViewModifier {
+    var following: Bool
+    var scroll: () -> Void
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, _ in
+                if following { scroll() }
+            }
+        } else {
+            content
+        }
+    }
+}
+
+/// The way back to the newest row for a reader scrolled up (a stray tap on the status bar scrolls
+/// to the top): one tap, as in other chat apps.
+struct JumpToEnd: View {
+    var shown: Bool
+    var action: () -> Void
+
+    var body: some View {
+        if shown {
+            Button(action: action) {
+                Image(systemName: "chevron.down").font(.body.weight(.medium)).frame(width: 30, height: 30)
+            }
+            .modifier(GlassCircle())
+            .accessibilityLabel(String(localized: "回到最新"))
+            .padding(12)
+            .transition(.opacity)
+        }
+    }
+}
+
+private struct GlassCircle: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.buttonStyle(.glass).buttonBorderShape(.circle).tint(Palette.text)
+        } else {
+            content.buttonStyle(.bordered).buttonBorderShape(.circle).tint(Palette.text)
+        }
     }
 }

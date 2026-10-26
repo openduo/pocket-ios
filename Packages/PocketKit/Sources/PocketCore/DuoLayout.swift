@@ -13,8 +13,8 @@ public enum DuoLayout: Equatable, Sendable {
     case phone
     /// The outer display in landscape: standing on a table, or the closed phone held sideways.
     case tent
-    /// Inner display, landscape. `split` is the leading pane's width: the fold, or half.
-    case side(split: Double)
+    /// Inner display, landscape. The system arranges the two sides around the fold.
+    case side
     /// Inner display, portrait, open flat. `top` is the top half's height, `gap` the fold's.
     case stacked(top: Double, gap: Double)
     /// Half-folded on a surface: the top half stands upright, out of reach.
@@ -31,7 +31,7 @@ public enum DuoLayout: Equatable, Sendable {
     public static func choose(regularWidth: Bool, compactHeight: Bool, width: Double, height: Double,
                               fold: Fold?) -> DuoLayout {
         if let fold, fold.width > fold.height { return .tabletop(top: fold.y, gap: fold.height) }
-        if regularWidth, width > height { return .side(split: min(fold?.x ?? width / 2, width / 2)) }
+        if regularWidth, width > height { return .side }
         if regularWidth { return .stacked(top: fold?.y ?? height / 2, gap: fold?.height ?? 0) }
         if compactHeight { return .tent }
         return .phone
