@@ -94,8 +94,23 @@ public struct PushLedger: Codable, Equatable, Sendable {
     public var readSeq: Int = 0
     /// Rows above `readSeq` already pushed.
     public var pushed: Set<Int> = []
+    /// Answers shown in notifications since the app was last in front: the app icon's badge. Each
+    /// answer counts once, whether the app or a push showed it first.
+    public var unread: Int = 0
 
     public init(room: String? = nil) { self.room = room }
+
+    private enum CodingKeys: String, CodingKey { case room, notified, readSeq, pushed, unread }
+
+    // A ledger written before a field existed decodes with that field's default.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        room = try c.decodeIfPresent(String.self, forKey: .room)
+        notified = try c.decodeIfPresent(Set<String>.self, forKey: .notified) ?? []
+        readSeq = try c.decodeIfPresent(Int.self, forKey: .readSeq) ?? 0
+        pushed = try c.decodeIfPresent(Set<Int>.self, forKey: .pushed) ?? []
+        unread = try c.decodeIfPresent(Int.self, forKey: .unread) ?? 0
+    }
 
     public enum Verdict: Equatable, Sendable {
         /// New: alert with sound.
@@ -115,14 +130,23 @@ public struct PushLedger: Codable, Equatable, Sendable {
         if pushed.contains(m.seq) { return .replay }
         if m.seq <= readSeq { return .quiet }
         pushed.insert(m.seq)
-        return notified.contains(id) ? .quiet : .alert
+        return notice(id) ? .alert : .quiet
+    }
+
+    /// Records an answer the app shows in a notification. False when it was already shown.
+    @discardableResult
+    public mutating func notice(_ id: String) -> Bool {
+        guard notified.insert(id).inserted else { return false }
+        unread += 1
+        return true
     }
 
     /// The app came to the front with its cursor at `cursor`: everything up to it is read, and
-    /// the notification centre is cleared.
+    /// the notification centre and the badge are cleared.
     public mutating func read(upTo cursor: Int?) {
         if let cursor, cursor > readSeq { readSeq = cursor }
         pushed = pushed.filter { $0 > readSeq }
         notified = []
+        unread = 0
     }
 }

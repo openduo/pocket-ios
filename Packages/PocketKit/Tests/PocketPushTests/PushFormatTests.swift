@@ -64,6 +64,32 @@ final class PushLedgerTests: XCTestCase {
         XCTAssertEqual(l.admit(message(21), id: "c"), .alert)
     }
 
+    func testCountsEachShownAnswerOnceUntilRead() {
+        var l = PushLedger(room: "pocket")
+        XCTAssertTrue(l.notice("local"))
+        XCTAssertFalse(l.notice("local"))
+        XCTAssertEqual(l.admit(message(10), id: "local"), .quiet)
+        XCTAssertEqual(l.unread, 1, "the push of an answer the app showed does not count again")
+        XCTAssertEqual(l.admit(message(11), id: "new"), .alert)
+        XCTAssertEqual(l.admit(message(11), id: "new"), .replay)
+        XCTAssertEqual(l.admit(message(12, room: "desk"), id: "x"), .foreign)
+        XCTAssertEqual(l.unread, 2)
+        l.read(upTo: 11)
+        XCTAssertEqual(l.unread, 0)
+        XCTAssertEqual(l.admit(message(9), id: "old"), .quiet)
+        XCTAssertEqual(l.unread, 0)
+    }
+
+    func testDecodesALedgerWrittenBeforeTheBadge() throws {
+        let old = #"{"room":"pocket","notified":["a"],"readSeq":7,"pushed":[8]}"#
+        let l = try JSONDecoder().decode(PushLedger.self, from: Data(old.utf8))
+        XCTAssertEqual(l.room, "pocket")
+        XCTAssertEqual(l.notified, ["a"])
+        XCTAssertEqual(l.readSeq, 7)
+        XCTAssertEqual(l.pushed, [8])
+        XCTAssertEqual(l.unread, 0)
+    }
+
     func testAnotherRoomIsForeign() {
         var l = PushLedger(room: "pocket")
         XCTAssertEqual(l.admit(message(5, room: "desk"), id: "x"), .foreign)

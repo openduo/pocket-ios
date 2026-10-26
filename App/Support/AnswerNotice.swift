@@ -12,6 +12,7 @@ import UserNotifications
 ///
 /// With push registered, the notification carries the same identifier and thread as the push of
 /// the same answer (`PushFormat`), so a push arriving after it replaces it, without a second sound.
+/// Each answer shown adds one to the app icon's badge; opening the app clears it.
 enum AnswerNotice {
     private static let thread = "duoduo-answer"
 
@@ -21,7 +22,7 @@ enum AnswerNotice {
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { s in
             guard s.authorizationStatus == .notDetermined else { return }
-            center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
                 AppLog.shared.log("notify_permission", ["granted": granted, "for": "answer"])
             }
         }
@@ -37,8 +38,12 @@ enum AnswerNotice {
         if let key = PushStore.key(), let room = PushStore.withLedger({ $0.room }) {
             identifier = PushFormat.answerID(key: key, messageIDs: messageIDs, text: text)
             content.threadIdentifier = PushFormat.threadID(key: key, room: room)
-            PushStore.withLedger { _ = $0.notified.insert(identifier) }
         }
+        let unread = PushStore.withLedger { l in
+            l.notice(identifier)
+            return l.unread
+        }
+        content.badge = NSNumber(value: unread)
         if silent {
             content.interruptionLevel = .passive
         } else {
@@ -50,11 +55,13 @@ enum AnswerNotice {
         }
     }
 
-    /// Removes delivered answer notifications, local and pushed; the thread now shows them. The
-    /// rows up to `cursor` are read, so a late push of one of them comes without sound.
+    /// Removes delivered answer notifications, local and pushed, and the badge; the thread now
+    /// shows them. The rows up to `cursor` are read, so a late push of one of them comes without
+    /// sound.
     static func withdrawAll(cursor: Int?) {
         PushStore.withLedger { $0.read(upTo: cursor) }
         let center = UNUserNotificationCenter.current()
+        center.setBadgeCount(0)
         center.getDeliveredNotifications { delivered in
             // Everything the app posts but ambient notices is an answer.
             let ids = delivered.map(\.request.identifier).filter { $0 != AmbientNotice.id }
