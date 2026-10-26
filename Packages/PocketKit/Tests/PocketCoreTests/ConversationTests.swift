@@ -31,6 +31,54 @@ final class HistoryCacheTests: XCTestCase {
         XCTAssertNotNil(again.lastFetch)
     }
 
+    /// Live rows go to the day's journal, not a rewrite of the day; a reload reads both, and a
+    /// fetch replaces the day and drops its journal.
+    func testLiveRowsAreJournaledAndReplacedByAFetch() throws {
+        let dir = tempDir()
+        let c = HistoryCache(directory: dir)
+        let a = ImlogEntry(at: "2026-10-07T01:00:00.000Z", kind: "typed", text: "hi", utt_id: "u1")
+        let b = ImlogEntry(at: "2026-10-07T01:00:01.000Z", speaker: "多多", kind: "answer", text: "hello")
+        let x = ImlogEntry(at: "2026-10-07T01:00:02.000Z", kind: "human", text: "more")
+        c.replace(day: "2026-10-07", entries: [a])
+        let dayFile = dir.appendingPathComponent("imlog-2026-10-07.json")
+        let fetched = try Data(contentsOf: dayFile)
+        c.append(day: "2026-10-07", entries: [a, b])
+        c.append(day: "2026-10-07", entries: [x])
+        XCTAssertEqual(try Data(contentsOf: dayFile), fetched, "the day file is not rewritten")
+        // A line cut short by a crash is skipped.
+        let journal = dir.appendingPathComponent("imlog-2026-10-07.jsonl")
+        let h = try FileHandle(forWritingTo: journal)
+        try h.seekToEnd()
+        try h.write(contentsOf: Data("{\"at\":".utf8))
+        try h.close()
+        let reloaded = HistoryCache(directory: dir)
+        XCTAssertEqual(reloaded.entries("2026-10-07"), [a, b, x])
+        // A row journaled after the cut line survives the next reload.
+        let y = ImlogEntry(at: "2026-10-07T01:00:03.000Z", kind: "human", text: "after")
+        reloaded.append(day: "2026-10-07", entries: [y])
+        XCTAssertEqual(HistoryCache(directory: dir).entries("2026-10-07"), [a, b, x, y])
+        // A live row for a day never fetched.
+        c.append(day: "2026-10-08", entries: [x])
+        XCTAssertEqual(HistoryCache(directory: dir).cachedDays, ["2026-10-07", "2026-10-08"])
+        reloaded.replace(day: "2026-10-07", entries: [b])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(HistoryCache(directory: dir).entries("2026-10-07"), [b])
+    }
+
+    /// Opening the cache lists its days; a day is read when it is asked for.
+    func testDaysAreReadOnDemand() {
+        let dir = tempDir()
+        let a = ImlogEntry(at: "2026-10-07T01:00:00.000Z", kind: "typed", text: "hi", utt_id: "u1")
+        HistoryCache(directory: dir).replace(day: "2026-10-05", entries: [a])
+        HistoryCache(directory: dir).append(day: "2026-10-07", entries: [a])
+        let c = HistoryCache(directory: dir)
+        XCTAssertEqual(c.cachedDays, ["2026-10-05", "2026-10-07"])
+        XCTAssertNil(c.lastFetch, "no day read yet")
+        XCTAssertEqual(c.entries("2026-10-05"), [a])
+        XCTAssertNotNil(c.lastFetch)
+        XCTAssertEqual(c.entries("2026-10-06"), [])
+    }
+
     func testTypedKeyUsesUttID() {
         let a = ImlogEntry(at: "x", kind: "typed", text: "same", utt_id: "u1")
         var b = a
@@ -170,6 +218,21 @@ final class TurnStateTests: XCTestCase {
         // A room-speech turn (no messages) ends on any idle.
         t.handle(frame: ["type": "turn", "phase": "received", "message_ids": []])
         XCTAssertTrue(t.handle(frame: ["type": "turn", "message_ids": [], "phase": "idle"]))
+    }
+
+    /// A turn of room speech still speaking its logged answer is not shown a second time.
+    func testLoggedAnswerHidesTheStreamingBubbleOfRoomSpeech() {
+        var t = TurnState()
+        t.handle(frame: ["type": "turn", "phase": "thinking"])
+        t.handle(frame: ["type": "duoduo_said", "speech_id": "s1", "text": "好，我看看。"])
+        XCTAssertEqual(t.working?.text, "好，我看看。")
+        func build(_ e: [ImlogEntry]) -> [ThreadRow] {
+            ThreadBuilder().build(.init(entries: e, outbox: [], turn: t, durations: [:], undelivered: [], notes: []))
+        }
+        let isWorking: (ThreadRow) -> Bool = { if case .working = $0 { true } else { false } }
+        XCTAssertTrue(build([]).contains(where: isWorking))
+        let answer = ImlogEntry(at: "2026-10-26T09:02:00.000Z", speaker: "多多", kind: "answer", text: "好，我看看。")
+        XCTAssertFalse(build([answer]).contains(where: isWorking))
     }
 
     /// An answer to other inputs does not end the bubble; it stays a provisional answer.
