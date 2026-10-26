@@ -126,6 +126,8 @@ public final class OutboxStore {
     public func mutate(_ f: (inout Outbox) -> Void) {
         let before = outbox
         f(&outbox)
+        // Most reconciles change nothing; the file is not rewritten for them.
+        guard outbox != before else { return }
         // Voice packets of removed items go with them.
         let kept = Set(outbox.items.map(\.id))
         for gone in before.items where !kept.contains(gone.id) {

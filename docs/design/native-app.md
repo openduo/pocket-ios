@@ -245,10 +245,9 @@ message delivered ──▶ working bubble "收到了"        (turn received, me
 | Not sent | network / 5xx after retries | failed bubble: "没发出去 · 轻点重试"; packets kept, retry reuses the same `Idempotency-Key` |
 
 - Touch delivery: the bar handles raw UIKit touches (`touchesBegan`), not a SwiftUI drag
-  gesture, and the conversation defers the bottom-edge system gesture
-  (`defersSystemGestures(on: .bottom)`), because the bar sits just above the home indicator,
-  where iOS otherwise holds a touch back until it has ruled out a home swipe. Cost: going home
-  from the conversation takes a second swipe (the first shows the indicator). `hold_timing`
+  gesture. The bottom-edge system gesture is not deferred: going home and switching apps take
+  one swipe, as in every other app. A press on the bar's lowest edge, inside the home-swipe zone,
+  may arrive late while iOS rules out a swipe; the rest of the bar is outside it. `hold_timing`
   logs `touch_age_ms`: the touch's hardware timestamp to the handler.
 - VoiceOver: the mic becomes a toggle (double-tap start, double-tap send, escape cancels); Magic
   Tap (two-finger double tap) does the same from anywhere in the conversation.
@@ -617,8 +616,16 @@ alternatives are kept for later:
 - Store: one JSON file per room per day (`imlog-YYYY-MM-DD`), plus the room's cursor: the `seq`
   of the newest row held, written after the rows it names. Rows arrive once, above the cursor:
   replayed on connect (`/live?since=`), live as `row`, or from `GET /api/imlog?since=`; each is
-  appended to its day. A room without a cursor takes `ready.seq` and loads its days by date; a
-  fetched day replaces its file whole. Nothing is merged locally beyond pending rows.
+  appended to its day's journal (`imlog-YYYY-MM-DD.jsonl`, one line per row), so a row costs a
+  short write, not a rewrite of the day. A room without a cursor takes `ready.seq` and loads its
+  days by date; a fetched day replaces its file whole and drops its journal. Nothing is merged
+  locally beyond pending rows.
+- The thread is built from the days in view: it starts at the newest day with rows, and reaching
+  the top shows the cached day before, then asks the server for older days. A streamed answer
+  rebuilds those days only, not the whole cache. Opening the cache lists its days; a day's file is
+  read the first time it is shown.
+- Scrolled up (by hand, or a stray tap on the status bar), a round ⌄ in the corner jumps back to
+  the newest row; the session pages have the same.
 - Local pending rows (unsent text, voice notes, uploads) live in a separate queue file, one
   message each under a fixed key, and are shown until the row whose `utt_id` is that key arrives.
   After a replay, an accepted message that `ready` neither lists nor logged is shown as failed.

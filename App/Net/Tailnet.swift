@@ -26,6 +26,8 @@ final class Tailnet: @unchecked Sendable {
     private var started = false
     private let events = TailnetEvents()
     private let path = NetworkPath()
+    /// The node's status, pushed by tsbridge each time it changes (any thread).
+    var onStatus: (@Sendable (TailnetStatus) -> Void)?
 
     /// Settings key: tsnet writes its log file (Settings › 诊断). Off by default: the file costs
     /// a write per probe and grows without bound.
@@ -344,17 +346,11 @@ final class LiveSocket: NSObject, TsbridgeLiveHandlerProtocol, @unchecked Sendab
         sendQueue.async { var e: NSError?; TsbridgeLiveSendText(s, &e) }
     }
 
-    /// Sends one capture block's packets, one frame each, in one bridge call. In try-it mode the
-    /// microphone's packets go nowhere: nothing leaves the phone.
-    func send(packets: [Data]) {
-        if TryMode.active || packets.isEmpty { return }
-        // Each packet behind its length as a big-endian UInt16 (`LiveSendBinaries`).
-        var framed = Data(capacity: packets.reduce(0) { $0 + 2 + $1.count })
-        for p in packets {
-            framed.append(UInt8(p.count >> 8))
-            framed.append(UInt8(p.count & 0xff))
-            framed.append(p)
-        }
+    /// Sends one capture block's packets, one frame each, in one bridge call: each packet behind
+    /// its length as a big-endian UInt16 (`LiveSendBinaries`, `OpusVoiceEncoder.push(_:framedInto:)`).
+    /// In try-it mode the microphone's packets go nowhere: nothing leaves the phone.
+    func send(framed: Data) {
+        if TryMode.active || framed.isEmpty { return }
         sendQueue.async { var e: NSError?; TsbridgeLiveSendBinaries(framed, &e) }
     }
 
@@ -363,8 +359,9 @@ final class LiveSocket: NSObject, TsbridgeLiveHandlerProtocol, @unchecked Sendab
     /// freed): the bytes are Go heap memory, valid only during this call. Copy before the packet
     /// moves to another queue.
     func onLiveBinary(_ data: Data?) {
-        guard let data else { return }
-        onBinary?(Data([UInt8](data)))
+        guard let data, !data.isEmpty else { return }
+        // One copy (an array and then a `Data` would be two).
+        onBinary?(data.withUnsafeBytes { Data(bytes: $0.baseAddress!, count: $0.count) })
     }
     func onLiveClosed(_ reason: String?) {
         let r = reason ?? ""
@@ -387,10 +384,22 @@ final class Locked<Value>: @unchecked Sendable {
     }
 }
 
-/// The tsnet lines the app always keeps (marked by the Tailscale patches), into the app log.
+/// The tsnet lines the app always keeps (marked by the Tailscale patches), into the app log, and
+/// the node's status each time it changes.
 private final class TailnetEvents: NSObject, TsbridgeEventHandlerProtocol {
+    /// tsbridge's `StatusPrefix`.
+    private static let statusPrefix = "pocket-status: "
+
     func event(_ line: String?) {
         guard let line else { return }
+        if line.hasPrefix(Self.statusPrefix) {
+            let json = Data(line.dropFirst(Self.statusPrefix.count).utf8)
+            // Try-it mode stands for a running node (`status()`); the real one is not shown.
+            if !TryMode.active, let st = try? JSONDecoder().decode(TailnetStatus.self, from: json) {
+                Tailnet.shared.onStatus?(st)
+            }
+            return
+        }
         AppLog.shared.log("tsnet_event", ["line": line])
     }
 }

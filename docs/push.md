@@ -37,6 +37,11 @@ notified, or at or below the read cursor, comes without sound. A row pushed a se
 be a replay, since the channel pushes each row once: it stays the silent placeholder. The relay's
 envelope itself carries no sound, so a push the extension does not open never rings.
 
+The app icon's badge counts answers shown in notifications since the app was last in front. The
+ledger counts each answer once, whether the app or a push showed it first; a placeholder, a replay
+or an already-read row does not count. The badge travels in the notification the app or the
+extension builds, never in the relay's envelope, and opening the app clears it.
+
 ## Environments
 
 Development-signed builds register with the APNs sandbox; App Store and TestFlight builds with

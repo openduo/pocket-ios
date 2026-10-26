@@ -9,6 +9,9 @@ import SwiftUI
 struct SessionDrawer: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject var viewer: SessionViewer
+    /// In the foldable's pane the list stands in place of the room: the room row is a way back,
+    /// not the current page.
+    var inPane = false
     @State private var expandedGroups: Set<String> = []
 
     var body: some View {
@@ -16,7 +19,7 @@ struct SessionDrawer: View {
         VStack(alignment: .leading, spacing: 0) {
             Button { viewer.showRoom() } label: {
                 DrawerRow(icon: "house", title: model.settings.roomTitle, detail: String(localized: "这台手机的房间"),
-                          selected: st.openKey == nil, running: false)
+                          selected: !inPane && st.openKey == nil, running: false)
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 10)
@@ -32,7 +35,7 @@ struct SessionDrawer: View {
                     } else if !st.listed {
                         ProgressView().frame(maxWidth: .infinity).padding(20)
                     } else if st.sessions.isEmpty {
-                        Text(String(localized: "没有其他会话")).font(.footnote).foregroundStyle(Palette.tertiary)
+                        Text(String(localized: "没有其他会话")).font(.footnote).foregroundStyle(Palette.secondary)
                             .padding(.horizontal, 16).padding(.vertical, 10)
                     }
                     group(String(localized: "会话"), st.chats, open: st.openKey)
@@ -51,8 +54,9 @@ struct SessionDrawer: View {
         if !items.isEmpty {
             let expanded = expandedGroups.contains(title)
             // Running first, then the latest activity; the rest fold so both groups stay in view.
-            let shown = expanded ? items : Array(items.prefix(Self.foldAfter))
-            Text(title).font(.caption.weight(.semibold)).foregroundStyle(Palette.tertiary)
+            let folds = items.count > Self.foldAfter
+            let shown = expanded || !folds ? items : Array(items.prefix(Self.foldAfter))
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(Palette.secondary)
                 .padding(.horizontal, 8).padding(.top, 12).padding(.bottom, 4)
                 .accessibilityAddTraits(.isHeader)
             ForEach(shown) { s in
@@ -62,11 +66,11 @@ struct SessionDrawer: View {
                 }
                 .buttonStyle(.plain)
             }
-            if items.count > Self.foldAfter {
+            if folds {
                 Button {
                     if expanded { expandedGroups.remove(title) } else { expandedGroups.insert(title) }
                 } label: {
-                    Text(expanded ? String(localized: "收起") : String(localized: "更多 \(items.count - Self.foldAfter) 个"))
+                    Text(expanded ? String(localized: "收起") : String(localized: "还有 \(items.count - Self.foldAfter) 个"))
                         .font(.caption).foregroundStyle(Palette.brand)
                         .padding(.horizontal, 8).padding(.vertical, 6)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -80,9 +84,11 @@ struct SessionDrawer: View {
     /// Rows a group shows before 「更多」. User decision.
     static let foldAfter = 5
 
-    /// 「飞书 · 18:01」: where the session lives, then its last activity.
+    /// 「飞书 · 18:01」: where the session lives, then its last activity; 「正在运行」 first while it
+    /// runs, so the state is not told by the dot's colour alone.
     private func detail(_ s: SessionSummary) -> String {
-        [sourceName(s), s.lastEvent.map(activityText)].compactMap { $0 }.joined(separator: " · ")
+        [s.running ? String(localized: "正在运行") : nil, sourceName(s), s.lastEvent.map(activityText)]
+            .compactMap { $0 }.joined(separator: " · ")
     }
 }
 
@@ -98,12 +104,12 @@ private struct DrawerRow: View {
             Image(systemName: icon).font(.subheadline).foregroundStyle(Palette.brand).frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.subheadline).foregroundStyle(Palette.text).lineLimit(1)
-                if let detail { Text(detail).font(.caption2).foregroundStyle(Palette.tertiary).lineLimit(1) }
+                if let detail { Text(detail).font(.footnote).foregroundStyle(Palette.secondary).lineLimit(1) }
             }
             Spacer(minLength: 4)
             if running {
-                Circle().fill(Palette.ok).frame(width: 7, height: 7)
-                    .accessibilityLabel(String(localized: "正在运行"))
+                // The detail line says it in words.
+                Circle().fill(Palette.ok).frame(width: 7, height: 7).accessibilityHidden(true)
             }
         }
         .padding(.horizontal, 8)
@@ -123,9 +129,16 @@ private func activityText(_ d: Date) -> String {
 /// An opened session, read-only: its recent rows as the daemon holds them, then live rows.
 struct SessionThreadView: View {
     @ObservedObject var viewer: SessionViewer
-    /// The foldable's session pane closes by a swipe toward the edge it leaves by: leading in
-    /// landscape, down (past the top of the list) in portrait.
-    var onSwipeLeading: (() -> Void)?
+    /// Off while the foldable's pane slides the session in: the loading mark, then the rows.
+    var showsRows = true
+    /// The reader is at the end of the session (`TracksEnd`).
+    @State private var atBottom = true
+    /// Height of the visible area; the content is at least this tall, rows at its bottom
+    /// (`ThreadView`).
+    @State private var viewport: CGFloat = 0
+    /// The foldable's session pane closes by a swipe toward the edge it leaves by: right (back,
+    /// as on a phone) when it is open flat, down (past the top of the list) on the table.
+    var onSwipeBack: (() -> Void)?
     var onPullDown: (() -> Void)?
     private static let bottomID = "session-bottom"
     private static let readingWidth: CGFloat = 640
@@ -144,15 +157,19 @@ struct SessionThreadView: View {
                         Text(String(localized: "暂时读不到多多的会话，正在重试"))
                             .font(.caption).foregroundStyle(Palette.attention).padding(8)
                     }
-                    if !st.loaded {
+                    if !st.loaded || !showsRows {
                         ProgressView().padding(24)
                     } else if st.items.isEmpty {
-                        Text(String(localized: "最近没有活动")).font(.subheadline).foregroundStyle(Palette.tertiary).padding(24)
+                        Text(String(localized: "最近没有活动")).font(.subheadline).foregroundStyle(Palette.secondary).padding(24)
                     }
-                    ForEach(SessionDisplayItem.fold(st.items)) { item in
-                        SessionItemView(item: item, openKey: st.openKey, sessions: st.sessions).id(item.id)
+                    if showsRows {
+                        ForEach(SessionDisplayItem.fold(st.items)) { item in
+                            SessionItemView(item: item, source: source(of: item, st)).id(item.id)
+                                .transition(.opacity)
+                        }
                     }
                     Color.clear.frame(height: 1).id(Self.bottomID)
+                        .modifier(EndMarker(atBottom: $atBottom))
                 }
                 // A readable column on a wide display (iPhone Duo's inner screen); the full width
                 // on a phone.
@@ -160,19 +177,105 @@ struct SessionThreadView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
-                // Inside the scroll view: outside it, the scroll view's pan takes the drag first.
-                .contentShape(Rectangle())
-                .simultaneousGesture(DragGesture(minimumDistance: 12).onEnded { v in
-                    guard let close = onSwipeLeading, abs(v.translation.width) > abs(v.translation.height),
-                          -v.predictedEndTranslation.width > Self.swipeToClose else { return }
-                    withAnimation(.smooth(duration: 0.4)) { close() }
-                }, isEnabled: onSwipeLeading != nil)
+                .frame(minHeight: viewport, alignment: .bottom)
             }
+            .modifier(SwipeBack(action: onSwipeBack))
             .defaultScrollAnchor(.bottom)
+            .modifier(TracksEnd(atBottom: $atBottom))
+            // A long session's rows are built after the first scroll to the end, and replace the
+            // lazy stack's estimated heights with real ones; the end moves, so follow it.
+            .modifier(FollowsGrowth(following: atBottom) { proxy.scrollTo(Self.bottomID, anchor: .bottom) })
+            .overlay(alignment: .bottomTrailing) {
+                JumpToEnd(shown: showsRows && !atBottom) {
+                    atBottom = true
+                    withAnimation { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+                }
+            }
             .modifier(PullToClose(action: onPullDown))
-            .onChange(of: st.items.count) { _, _ in
+            // As in `ThreadView`: the bottom anchor alone lets a live session go blank when rows
+            // change height (the lazy stack's kept offset points past rows it has not built), so
+            // while the reader is at the end every change scrolls to the end row after layout.
+            // A reader scrolled up stays where they are.
+            .onChange(of: showsRows) { _, shown in
+                guard shown, atBottom else { return }
                 DispatchQueue.main.async { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
             }
+            .onChange(of: st.items) { _, _ in
+                guard atBottom else { return }
+                DispatchQueue.main.async { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
+                viewport = h
+                guard atBottom else { return }
+                DispatchQueue.main.async { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+            }
+        }
+    }
+
+    /// Who sent a row, by its name in the list; nothing when the session sent it to itself.
+    /// Resolved here so a row holds only its own text, and a list refresh does not rebuild it.
+    private func source(of item: SessionDisplayItem, _ st: SessionViewerState) -> String? {
+        guard case .row(let r) = item, r.kind == .message || r.kind == .notify else { return nil }
+        guard let key = r.from, key != st.openKey else { return nil }
+        if let s = st.sessions.first(where: { $0.key == key }) { return s.name }
+        // Not listed: the readable part of the key (`job:<name>.<hash>`, `<source>:<name>:…`).
+        if key.hasPrefix("job:") {
+            let id = key.dropFirst("job:".count)
+            return id.lastIndex(of: ".").map { String(id[..<$0]) } ?? String(id)
+        }
+        let parts = key.split(separator: ":")
+        return parts.count > 1 ? String(parts[1]) : key
+    }
+}
+
+/// Calls `action` when a swipe to the right (back, as on a phone) would carry past
+/// `SessionThreadView.swipeToClose`. A UIKit pan that begins only on horizontal motion and runs
+/// beside the scroll view's own pan, so vertical drags still scroll (a SwiftUI drag gesture inside
+/// a scroll view takes them); with any other gesture, a row's press, it does not, so a swipe that
+/// starts on a row does not also open it.
+struct SwipeBack: ViewModifier {
+    var action: (() -> Void)?
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *), let action {
+            content.gesture(BackPan(action: action))
+        } else {
+            content
+        }
+    }
+}
+
+@available(iOS 18.0, *)
+private struct BackPan: UIGestureRecognizerRepresentable {
+    var action: () -> Void
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let pan = UIPanGestureRecognizer()
+        pan.delegate = context.coordinator
+        return pan
+    }
+
+    func handleUIGestureRecognizerAction(_ pan: UIPanGestureRecognizer, context: Context) {
+        guard pan.state == .ended else { return }
+        let t = pan.translation(in: pan.view).x, v = pan.velocity(in: pan.view).x
+        // Where the swipe would come to rest, decelerating as a scroll view does.
+        let rate = UIScrollView.DecelerationRate.normal.rawValue
+        let predicted = t + v / 1000 * rate / (1 - rate)
+        if predicted > SessionThreadView.swipeToClose { withAnimation(.smooth(duration: 0.4)) { action() } }
+    }
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+            guard let pan = g as? UIPanGestureRecognizer else { return false }
+            let v = pan.velocity(in: pan.view)
+            return abs(v.x) > abs(v.y)
+        }
+
+        func gestureRecognizer(_ g: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            other is UIPanGestureRecognizer
         }
     }
 }
@@ -196,14 +299,14 @@ private struct PullToClose: ViewModifier {
 
 private struct SessionItemView: View {
     let item: SessionDisplayItem
-    let openKey: String?
-    let sessions: [SessionSummary]
+    /// The sending session's name, for a message or a notification from elsewhere.
+    let source: String?
 
     var body: some View {
         switch item {
         case .gap:
-            Text(String(localized: "此处有未显示的事件"))
-                .font(.caption2).foregroundStyle(Palette.tertiary)
+            Text(String(localized: "中间省略了一些记录"))
+                .font(.caption2).foregroundStyle(Palette.secondary)
                 .frame(maxWidth: .infinity).padding(.vertical, 6)
         case .steps(_, let rows):
             SessionSteps(rows: rows)
@@ -212,12 +315,12 @@ private struct SessionItemView: View {
             case .message:
                 if !(r.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     MineBubble(text: r.text ?? "", voiceSource: nil, durationMs: nil, attachments: [],
-                               meta: source(r.from).map { .plain(String(localized: "来自「\($0)」")) }, dimmed: false)
+                               meta: source.map { .plain(String(localized: "来自「\($0)」")) }, dimmed: false)
                 }
             case .reply:
                 ReplyBubble(text: r.text ?? "", at: r.date)
             case .notify:
-                NotifyCard(text: r.text ?? "", from: r.fromLabel ?? source(r.from), at: r.date)
+                NotifyCard(text: r.text ?? "", from: r.fromLabel ?? source, at: r.date)
             case .tool:
                 SessionSteps(rows: [r])
             case .system:
@@ -226,19 +329,6 @@ private struct SessionItemView: View {
                     .frame(maxWidth: .infinity).padding(.vertical, 4)
             }
         }
-    }
-
-    /// The sending session by its name in the list; nothing when the session sent it to itself.
-    private func source(_ key: String?) -> String? {
-        guard let key, key != openKey else { return nil }
-        if let s = sessions.first(where: { $0.key == key }) { return s.name }
-        // Not listed: the readable part of the key (`job:<name>.<hash>`, `<source>:<name>:…`).
-        if key.hasPrefix("job:") {
-            let id = key.dropFirst("job:".count)
-            return id.lastIndex(of: ".").map { String(id[..<$0]) } ?? String(id)
-        }
-        let parts = key.split(separator: ":")
-        return parts.count > 1 ? String(parts[1]) : key
     }
 }
 
@@ -430,6 +520,7 @@ private struct SessionSteps: View {
 private struct ReplyBubble: View {
     var text: String
     var at: Date?
+    @Environment(\.narrowPane) private var narrowPane
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -443,9 +534,10 @@ private struct ReplyBubble: View {
                         ShareLink(item: text) { Label(String(localized: "分享"), systemImage: "square.and.arrow.up") }
                     }
             }
-            if let at { Text(hm(at)).font(.caption2).foregroundStyle(Palette.tertiary).padding(.horizontal, 6) }
+            if let at { Text(hm(at)).font(.caption2).foregroundStyle(Palette.secondary).padding(.horizontal, 6) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.trailing, 56)
+        // The phone's reserve beside an answer; a narrow pane has no width to spare for it.
+        .padding(.trailing, narrowPane ? 0 : 56)
     }
 }

@@ -50,23 +50,43 @@ public final class OpusVoiceEncoder {
 
     /// Appends samples and returns the packets for every complete frame.
     public func push(_ samples: UnsafeBufferPointer<Int16>) throws -> [Data] {
+        var packets: [Data] = []
+        try encode(samples) { packets.append(Data($0)) }
+        return packets
+    }
+
+    /// Appends samples and adds every complete frame's packet to `framed`, each behind its length
+    /// as a big-endian UInt16 (the `/live` binary layout); returns how many. One buffer for a
+    /// capture block instead of one per packet.
+    @discardableResult
+    public func push(_ samples: UnsafeBufferPointer<Int16>, framedInto framed: inout Data) throws -> Int {
+        try encode(samples) { p in
+            framed.append(UInt8(p.count >> 8))
+            framed.append(UInt8(p.count & 0xff))
+            framed.append(p.baseAddress!, count: p.count)
+        }
+    }
+
+    /// Encodes every complete frame, handing each packet to `packet` while it is valid.
+    private func encode(_ samples: UnsafeBufferPointer<Int16>,
+                        _ packet: (UnsafeBufferPointer<UInt8>) -> Void) throws -> Int {
         pending.append(contentsOf: samples)
         let n = PocketConstants.frameSamples
-        var packets: [Data] = []
+        var count = 0
         var start = 0
         while pending.count - start >= n {
-            let len = try pending.withUnsafeBufferPointer { p in
+            try pending.withUnsafeBufferPointer { p in
                 try out.withUnsafeMutableBufferPointer { o in
                     let r = opus_encode(enc, p.baseAddress! + start, Int32(n), o.baseAddress!, Int32(o.count))
                     if r < 0 { throw OpusFailure(code: r, call: "opus_encode") }
-                    return Int(r)
+                    packet(UnsafeBufferPointer(rebasing: o[0..<Int(r)]))
                 }
             }
-            packets.append(Data(out[0..<len]))
+            count += 1
             start += n
         }
         if start > 0 { pending.removeFirst(start) }
-        return packets
+        return count
     }
 
     public func push(_ samples: [Int16]) throws -> [Data] {

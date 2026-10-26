@@ -52,7 +52,9 @@ final class AppModel: ObservableObject {
     @Published var cancelArmed = false
     /// Global frame of the composer's hold button. The finger outside it arms cancel; the
     /// recording sheet draws the button again at this frame so the boundary is what the user sees.
-    @Published var holdButtonFrame: CGRect = .zero
+    /// Not published: it moves with every layout pass of the composer, and is read only when a
+    /// hold starts (the overlay appears with `holding`).
+    var holdButtonFrame: CGRect = .zero
     /// Composer input: hold-to-talk (default) or keyboard. The last choice survives relaunch.
     @Published var voiceInput: Bool = UserDefaults.standard.object(forKey: Keys.composerVoice) as? Bool ?? true {
         didSet { if persistComposerMode { UserDefaults.standard.set(voiceInput, forKey: Keys.composerVoice) } }
@@ -76,10 +78,9 @@ final class AppModel: ObservableObject {
     /// The pairing sheet, with the link it was opened with (nil: scan or paste one).
     @Published var pairSheet: PairRequest?
 
-    private var timer: Timer?
     private var active = false
 
-    /// UI refresh cadence for the device and tailnet rows while visible. Display only.
+    /// How often the Tailscale login page checks whether the login finished. Display only.
     static let refreshSeconds = 1.0
 
     init() {
@@ -98,6 +99,19 @@ final class AppModel: ObservableObject {
         }
         AmbientController.shared.onReadFailure = { [weak self] f in
             Task { @MainActor in self?.toast = Self.readFailureText(f) }
+        }
+        // The device row and the tailnet state are pushed when they change; nothing polls them.
+        PocketEngine.shared.onSnapshot = { [weak self] d in
+            Task { @MainActor in
+                guard let self, self.active, d != self.device else { return }
+                self.device = d
+            }
+        }
+        Tailnet.shared.onStatus = { [weak self] st in
+            Task { @MainActor in
+                guard let self, self.tailnet != st else { return }
+                self.tailnet = st
+            }
         }
         AmbientController.shared.onChange = { [weak self] in
             Task { @MainActor in
@@ -124,8 +138,6 @@ final class AppModel: ObservableObject {
 
     func setActive(_ a: Bool) {
         active = a
-        timer?.invalidate()
-        timer = nil
         SessionViewer.shared.setActive(a)
         guard a else { return }
         #if DEBUG
@@ -134,10 +146,8 @@ final class AppModel: ObservableObject {
         chat = ConversationStore.shared.snapshot()
         ambient = AmbientController.shared.snapshot()
         ConversationStore.shared.appBecameActive()
+        // Changes while in the background were not published; catch up once.
         refresh()
-        timer = Timer.scheduledTimer(withTimeInterval: Self.refreshSeconds, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
-        }
     }
 
     func refresh() {
@@ -197,6 +207,7 @@ final class AppModel: ObservableObject {
         SessionViewer.shared.reset()
         TryMode.enter()
         trying = true
+        refresh()
         settings = ChannelSettings.load()
         onboarding = false
         PocketEngine.shared.settingsChanged()
@@ -213,6 +224,7 @@ final class AppModel: ObservableObject {
         chips = []
         TryMode.exit()
         trying = false
+        refresh()
         settings = ChannelSettings.load()
         onboarding = !settings.isComplete
         PocketEngine.shared.settingsChanged()

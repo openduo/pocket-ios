@@ -18,15 +18,10 @@ final class DuoLayoutTests: XCTestCase {
         XCTAssertEqual(choose(false, true, 678, 466), .tent)
     }
 
-    func testOpenFlatLandscapeSplitsAtTheMiddle() {
-        XCTAssertEqual(choose(true, false, 951, 669), .side(split: 475.5))
-    }
-
-    func testABookFoldSplitsAtTheFoldButNeverPastHalf() {
+    func testLandscapeIsSideByOpenFlatOrAsABook() {
+        XCTAssertEqual(choose(true, false, 951, 669), .side)
         let fold = DuoLayout.Fold(x: 470, y: 0, width: 12, height: 669)
-        XCTAssertEqual(choose(true, false, 951, 669, fold), .side(split: 470))
-        let late = DuoLayout.Fold(x: 600, y: 0, width: 12, height: 669)
-        XCTAssertEqual(choose(true, false, 951, 669, late), .side(split: 475.5))
+        XCTAssertEqual(choose(true, false, 951, 669, fold), .side)
     }
 
     func testOpenFlatPortraitStacksAtTheMiddle() {

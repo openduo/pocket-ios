@@ -26,13 +26,15 @@ final class NotificationService: UNNotificationServiceExtension {
             return finish()
         }
         let id = PushFormat.answerID(key: key, messageIDs: message.messageIDs, text: message.text)
-        switch PushStore.withLedger({ $0.admit(message, id: id) }) {
+        let (verdict, unread) = PushStore.withLedger { l in (l.admit(message, id: id), l.unread) }
+        switch verdict {
         case .foreign, .replay:
             return finish()
         case .quiet:
             content.interruptionLevel = .passive
         case .alert:
             content.sound = .default
+            content.badge = NSNumber(value: unread)
         }
         let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
         content.body = message.cut ? text + "…" : text

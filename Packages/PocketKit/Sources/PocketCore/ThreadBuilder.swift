@@ -222,7 +222,10 @@ public struct ThreadBuilder {
         for p in input.outbox where !logged.contains(p.messageID) {
             rows.append(.pending(p))
         }
-        if let w = input.turn.working {
+        // A turn of room speech names no message, so its logged answer does not end it; it ends
+        // when the speech does. Once its streamed text is logged, the row stands for it.
+        if let w = input.turn.working,
+           w.text.isEmpty || !loggedAnswers.contains(w.text.trimmingCharacters(in: .whitespacesAndNewlines)) {
             rows.append(.working(w))
         }
 

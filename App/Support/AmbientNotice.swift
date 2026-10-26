@@ -10,13 +10,14 @@ import UserNotifications
 enum AmbientNotice {
     static let id = "ambient-interrupted"
 
-    /// Asks for permission the first time ambient mode is turned on; sound is for `AnswerNotice`.
+    /// Asks for permission the first time ambient mode is turned on; sound and badge are for
+    /// `AnswerNotice`.
     /// iOS shows the prompt only while undecided; a denial changes nothing else.
     static func requestPermissionIfUndecided() {
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { s in
             guard s.authorizationStatus == .notDetermined else { return }
-            center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
                 AppLog.shared.log("notify_permission", ["granted": granted])
             }
         }

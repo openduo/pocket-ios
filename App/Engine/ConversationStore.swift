@@ -29,6 +29,8 @@ struct ChatSnapshot: Equatable {
     var cachedAt: Date?
     var older = Older.idle
     var hasHistory = false
+    /// Cached days before the first one shown: scrolling up shows them without the network.
+    var hasEarlierCached = false
     var configured = false
     /// Which side must be upgraded, when the channel said so.
     var upgrade: UpgradeNotice?
@@ -68,6 +70,10 @@ final class ConversationStore: @unchecked Sendable {
     private var connection = ChatSnapshot.Connection.connecting
     private var lastHeard: String?
     private var older = ChatSnapshot.Older.idle
+    /// The first day the thread shows. Set to the newest cached day with rows and moved
+    /// back one day each time the reader reaches the top, so a build walks the days in view, not
+    /// the whole cache (it is rebuilt for every streamed word). Nil: nothing cached yet.
+    private var shownFrom: String?
     private var pumping = false
 
     private let snapLock = NSLock()
@@ -119,6 +125,7 @@ final class ConversationStore: @unchecked Sendable {
         turn = TurnState()
         room = nil
         older = .idle
+        shownFrom = nil
         connection = .connecting
         changed()
     }
@@ -487,10 +494,17 @@ final class ConversationStore: @unchecked Sendable {
 
     // MARK: older history
 
-    /// Fetches days before the oldest cached day until one has rows, up to `historyScanDays`.
+    /// Shows the cached day before the first one shown; with none left, fetches days before the
+    /// oldest cached day until one has rows, up to `historyScanDays`.
     func loadOlder() {
         queue.async { [self] in
-            guard let cache, older != .loading, connection == .online else { return }
+            guard let cache, older != .loading else { return }
+            if let from = shownFrom, let earlier = cache.cachedDays.last(where: { $0 < from }) {
+                shownFrom = earlier
+                changed()
+                return
+            }
+            guard connection == .online else { return }
             let oldest: String
             if case .exhausted(let before) = older {
                 oldest = before
@@ -518,6 +532,7 @@ final class ConversationStore: @unchecked Sendable {
                 queue.async { [self] in
                     if let (d, e) = found {
                         cache.replace(day: d, entries: e)
+                        shownFrom = d
                         older = .idle
                     } else {
                         older = failed ? .idle : .exhausted(before: day)
@@ -557,10 +572,16 @@ final class ConversationStore: @unchecked Sendable {
         var s = ChatSnapshot()
         s.configured = settings.isComplete
         if let cache {
-            let entries = cache.all()
+            let days = cache.cachedDays
+            // A fetched day can be empty (today before anything was said); the thread starts at
+            // the newest day with rows.
+            if shownFrom == nil { shownFrom = days.last(where: { !cache.entries($0).isEmpty }) }
+            let shown = days.filter { $0 >= (shownFrom ?? "") }
+            let entries = shown.flatMap { cache.entries($0) }
             s.rows = ThreadBuilder().build(.init(entries: entries, outbox: outbox?.outbox.items ?? [], turn: turn,
                                                  durations: durations, undelivered: undelivered, notes: notes))
-            s.hasHistory = !entries.isEmpty || !(outbox?.outbox.items.isEmpty ?? true)
+            s.hasHistory = shownFrom != nil || !(outbox?.outbox.items.isEmpty ?? true)
+            s.hasEarlierCached = shown.count < days.count
             s.cachedAt = cache.lastFetch
         }
         s.connection = connection

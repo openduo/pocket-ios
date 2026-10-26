@@ -79,6 +79,26 @@ final class SessionViewerTests: XCTestCase {
         XCTAssertEqual(type(back), "sessions_watch")
         XCTAssertTrue(back?["open"] is NSNull)
         XCTAssertEqual(type(s.closeDrawer()), "sessions_unwatch")
+
+        // Back from a session to the list: one frame, the list stays watched.
+        _ = s.open("k1")
+        let shown = SessionRow(id: "r1", at: "2026-10-26T00:00:00Z", kind: .reply, text: "a")
+        _ = s.apply(.rows(key: "k1", rows: [shown], initial: true, gap: false))
+        let list = s.backToList()
+        XCTAssertEqual(type(list), "sessions_watch")
+        XCTAssertTrue(list?["open"] is NSNull)
+        XCTAssertTrue(s.drawerOpen)
+        XCTAssertNil(s.openKey)
+        XCTAssertEqual(s.items, [.row(shown)], "the closed session's rows slide out as they were")
+        XCTAssertEqual(s.shownKey, "k1", "and keep their title")
+        XCTAssertFalse(s.apply(.rows(key: "k1", rows: [SessionRow(id: "r2", at: "2026-10-26T00:00:01Z", kind: .reply, text: "b")], initial: false, gap: false)))
+        XCTAssertNil(s.backToList())
+        _ = s.open("k2")
+        XCTAssertTrue(s.items.isEmpty, "the next session starts empty")
+        XCTAssertEqual(s.shownKey, "k2")
+        _ = s.reset()
+        XCTAssertTrue(s.items.isEmpty)
+        XCTAssertNil(s.shownKey)
     }
 
     func testListReplacesAndIsDroppedOnLeave() {
@@ -100,8 +120,23 @@ final class SessionViewerTests: XCTestCase {
         XCTAssertTrue(s.apply(.sessions(list)))
         XCTAssertNil(s.error)
         _ = s.closeDrawer()
+        XCTAssertEqual(s.sessions.map(\.key), ["a", "b"], "the last list stays for the next opening")
+        XCTAssertTrue(s.listed)
+        _ = s.openDrawer()
+        XCTAssertEqual(type(s.reset()), "sessions_unwatch")
         XCTAssertTrue(s.sessions.isEmpty)
         XCTAssertFalse(s.listed)
+        XCTAssertFalse(s.watching)
+    }
+
+    func testShowRoomIsOneChange() {
+        var s = SessionViewerState()
+        XCTAssertNil(s.showRoom(), "not watching")
+        _ = s.open("k")
+        _ = s.backToList()
+        XCTAssertEqual(type(s.showRoom()), "sessions_unwatch")
+        XCTAssertFalse(s.drawerOpen)
+        XCTAssertNil(s.openKey)
     }
 
     func testThreadRows() {

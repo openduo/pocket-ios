@@ -118,8 +118,17 @@ final class PocketEngine: @unchecked Sendable {
         return snap
     }
 
+    /// Called on the engine's queue after the snapshot changed (a few times a minute at most:
+    /// link state, the Passport's battery, a press, a reply).
+    var onSnapshot: (@Sendable (EngineSnapshot) -> Void)?
+
     private func update(_ f: (inout EngineSnapshot) -> Void) {
-        snapLock.lock(); f(&snap); snapLock.unlock()
+        snapLock.lock()
+        let before = snap
+        f(&snap)
+        let after = snap
+        snapLock.unlock()
+        if after != before { onSnapshot?(after) }
     }
 
     func settingsChanged() {
@@ -597,8 +606,10 @@ final class PocketEngine: @unchecked Sendable {
                     failure = "\(error)"
                 }
             }
-            // Room status (health, limits, date) for the conversation screen.
-            if failure == nil {
+            // Room status (health, limits, date) for the conversation screen. A Passport's
+            // keepalive comes every few seconds through a reply wait; a connection it found alive
+            // has nothing new to fetch.
+            if failure == nil, opened || reason != "keepalive" {
                 if let st = Self.fetchState(s, tuning) {
                     ConversationStore.shared.connected(st)
                 } else {

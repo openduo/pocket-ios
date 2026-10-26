@@ -1751,7 +1751,7 @@
         }
       }
     },
-    "更多 %lld 个": {
+    "还有 %lld 个": {
       "localizations": {
         "en": {
           "stringUnit": {
@@ -2251,7 +2251,7 @@
         }
       }
     },
-    "环境模式关着": {
+    "环境模式已关": {
       "localizations": {
         "en": {
           "stringUnit": {
@@ -3543,12 +3543,12 @@
         }
       }
     },
-    "此处有未显示的事件": {
+    "中间省略了一些记录": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Some events are not shown here"
+            "value": "Some records in between are left out"
           }
         }
       }
@@ -3845,6 +3845,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Turn on to troubleshoot connections; exported logs include it. Leaving it off saves battery."
+          }
+        }
+      }
+    },
+    "回到最新": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jump to latest"
           }
         }
       }

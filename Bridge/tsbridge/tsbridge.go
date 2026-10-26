@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"tailscale.com/ipn"
 	"tailscale.com/logtail"
 	"tailscale.com/tsnet"
 )
@@ -80,7 +81,8 @@ func (t chanTarget) scheme() string {
 func (t chanTarget) origin() string { return t.scheme() + "://" + t.hostPort() }
 
 // EventHandler receives the few tsnet lines the app always keeps: the ones the
-// Tailscale patches mark with "pocket: " (Bridge/tailscale-patches).
+// Tailscale patches mark with "pocket: " (Bridge/tailscale-patches), and the
+// node's status as StatusPrefix + the JSON of Status each time it changes.
 type EventHandler interface {
 	Event(line string)
 }
@@ -96,11 +98,17 @@ func SetEventHandler(h EventHandler) {
 // else goes to tsnet.log only while logging is on, without Tailscale's
 // verbose ([v1], [v2]) lines.
 func logf(format string, args ...any) {
-	line := fmt.Sprintf(format, args...)
 	logMu.Lock()
 	h, f := events, logFile
 	logMu.Unlock()
-	if h != nil && strings.Contains(line, "pocket: ") {
+	// Loggers add their prefixes and the verbose marks to the format, so a line nobody takes is
+	// dropped before it is formatted.
+	marked := h != nil && strings.Contains(format, "pocket: ")
+	if !marked && (f == nil || strings.Contains(format, "[v1] ") || strings.Contains(format, "[v2] ")) {
+		return
+	}
+	line := fmt.Sprintf(format, args...)
+	if marked {
 		h.Event(line)
 	}
 	if f == nil || strings.Contains(line, "[v1] ") || strings.Contains(line, "[v2] ") {
@@ -172,6 +180,7 @@ func Start(stateDir, hostname string) error {
 		return err
 	}
 	srv = s
+	go watchStatus(s)
 	// One shared transport so connections are reused. Go's DefaultTransport
 	// timeouts are kept; only the dialer changes.
 	t := http.DefaultTransport.(*http.Transport).Clone()
@@ -382,4 +391,46 @@ func Do(method, path, headersJSON string, body []byte, timeoutMs int64) (*Respon
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// StatusPrefix marks a status line sent to the EventHandler.
+const StatusPrefix = "pocket-status: "
+
+// watchStatus sends Status to the event handler when it changes, so the app
+// does not poll it. The IPN bus says when the backend state, the login URL or
+// the node itself changed; peers are not watched.
+func watchStatus(s *tsnet.Server) {
+	lc, err := s.LocalClient()
+	if err != nil {
+		logf("pocket: status watch failed: %v", err)
+		return
+	}
+	w, err := lc.WatchIPNBus(context.Background(), ipn.NotifyInitialState)
+	if err != nil {
+		logf("pocket: status watch failed: %v", err)
+		return
+	}
+	defer w.Close()
+	last := ""
+	for {
+		n, err := w.Next()
+		if err != nil {
+			logf("pocket: status watch ended: %v", err)
+			return
+		}
+		if n.State == nil && n.BrowseToURL == nil && n.LoginFinished == nil && n.SelfChange == nil {
+			continue
+		}
+		st := Status()
+		if st == last {
+			continue
+		}
+		last = st
+		logMu.Lock()
+		h := events
+		logMu.Unlock()
+		if h != nil {
+			h.Event(StatusPrefix + st)
+		}
+	}
 }
