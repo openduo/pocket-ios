@@ -58,6 +58,21 @@ final class VoiceIO: @unchecked Sendable {
     /// Whether the running engine has voice processing (echo cancellation) on: the `aec` value of
     /// `hello`.
     private(set) var voiceProcessing = false
+    /// The ambient engine was built for a Bluetooth headset, without voice processing.
+    private var builtForHeadset = false
+
+    /// The ambient engine runs for a Bluetooth headset.
+    var headset: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return builtForHeadset
+    }
+
+    /// The uplink carries no echo of the playback: voice processing, or a Bluetooth headset that
+    /// cancels its own (the `hello` frame's `aec`).
+    var echoCancelled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return voiceProcessing || builtForHeadset
+    }
     private(set) var ambientMode = false
     /// The running engine has no input: it was started only to play.
     private var playbackOnly = false
@@ -214,6 +229,7 @@ final class VoiceIO: @unchecked Sendable {
         player = p
         converter = nil
         voiceProcessing = false
+        builtForHeadset = false
         ambientMode = false
         playbackOnly = true
         lock.unlock()
@@ -223,7 +239,10 @@ final class VoiceIO: @unchecked Sendable {
     private func buildEngine(ambient: Bool) throws {
         let e = AVAudioEngine()
         var vp = false
-        if ambient {
+        // A Bluetooth headset cancels its own echo in HFP, and its speaker sits in the ear: voice
+        // processing on top of it adds nothing and crackles loudly on AirPods.
+        let headset = ambient && Self.bluetoothOutput
+        if ambient, !headset {
             do {
                 try e.inputNode.setVoiceProcessingEnabled(true)
                 vp = e.inputNode.isVoiceProcessingEnabled && !e.inputNode.isVoiceProcessingBypassed
@@ -255,6 +274,7 @@ final class VoiceIO: @unchecked Sendable {
         player = p
         converter = conv
         voiceProcessing = vp
+        builtForHeadset = headset
         ambientMode = ambient
         playbackOnly = false
         lock.unlock()
@@ -263,7 +283,8 @@ final class VoiceIO: @unchecked Sendable {
     /// Starts the built engine. On failure the engine is discarded.
     private func startBuilt() throws {
         lock.lock()
-        let e = engine, p = player, ambient = ambientMode, vp = voiceProcessing, playOnly = playbackOnly
+        let e = engine, p = player, ambient = ambientMode, vp = voiceProcessing, playOnly = playbackOnly,
+            headset = builtForHeadset
         lock.unlock()
         guard let e else { throw Failure.engine("no engine") }
         do {
@@ -279,7 +300,7 @@ final class VoiceIO: @unchecked Sendable {
             return
         }
         let format = e.inputNode.outputFormat(forBus: 0)
-        AppLog.shared.log("audio_start", ["ambient": ambient, "vp": vp, "in_rate": format.sampleRate,
+        AppLog.shared.log("audio_start", ["ambient": ambient, "vp": vp, "headset": headset, "in_rate": format.sampleRate,
                                           "in_ch": format.channelCount, "route": Self.routeName,
                                           "in_route": Self.inputName])
     }
@@ -318,10 +339,11 @@ final class VoiceIO: @unchecked Sendable {
     /// A stopped engine also gets its player reconnected before the restart: after the
     /// voice-processing change the player stays `isPlaying` but never consumes a scheduled buffer
     /// (measured on the iPhone 17 Pro Max). Reconnecting player → mixer fixes it.
+
     @objc private func configChanged(_ n: Notification) {
         configQueue.async { [self] in
             lock.lock()
-            let e = engine, p = player, conv = converter, playOnly = playbackOnly
+            let e = engine, p = player, conv = converter, playOnly = playbackOnly, headset = builtForHeadset
             lock.unlock()
             guard let e, (n.object as? AVAudioEngine) === e else { return }
             if playOnly {
@@ -357,10 +379,20 @@ final class VoiceIO: @unchecked Sendable {
                     AppLog.shared.log("audio_restart_error", ["err": error.localizedDescription])
                 }
             }
-            let vp = input.isVoiceProcessingEnabled && !input.isVoiceProcessingBypassed
-            lock.lock(); voiceProcessing = ambientMode && vp; lock.unlock()
+            lock.lock()
+            let ambient = ambientMode
+            // Voice processing is what the engine was built with; the input node may report it
+            // enabled on a headset route where it was never turned on.
+            let vp = ambient && !headset && input.isVoiceProcessingEnabled && !input.isVoiceProcessingBypassed
+            voiceProcessing = vp
+            lock.unlock()
             AppLog.shared.log("audio_config_change", ["route": Self.routeName, "retapped": retapped, "restarted": restarted,
                                                       "player_reconnected": playerReconnected, "in_rate": format.sampleRate, "vp": vp])
+            if ambient, headset != Self.bluetoothOutput {
+                // A headset came or went: voice processing follows it, which needs a new engine.
+                onRebuildNeeded?("headset")
+                return
+            }
             onRouteChanged?()
         }
     }
@@ -372,6 +404,7 @@ final class VoiceIO: @unchecked Sendable {
         player = nil
         converter = nil
         voiceProcessing = false
+        builtForHeadset = false
         playbackOnly = false
         levelBits = 0
         outputLevelBits = 0
