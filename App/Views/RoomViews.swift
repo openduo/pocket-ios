@@ -52,6 +52,8 @@ extension AppModel {
         default:
             if a.silent { return String(localized: "已静音：还在听，回复只显示在屏幕上") }
             if a.speaking { return a.speakingFiller ? String(localized: "马上回答你") : String(localized: "说话就能打断它") }
+            // A headset needs no echo cancellation: only the route is worth saying.
+            if a.headset { return a.route }
             return "\(a.route) · \(a.aec ? String(localized: "回声消除已开") : String(localized: "回声消除未开"))"
         }
     }

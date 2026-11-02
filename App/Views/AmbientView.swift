@@ -174,7 +174,8 @@ struct AmbientPill: View {
             .frame(width: 28, height: 20)
             VStack(alignment: .leading, spacing: 1) {
                 Text(phase).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.brand)
-                Text(String(localized: "环境模式 · \(a.route) · \(a.aec ? String(localized: "回声消除已开") : String(localized: "回声消除未开"))"))
+                Text(a.headset ? String(localized: "环境模式 · \(a.route)")
+                     : String(localized: "环境模式 · \(a.route) · \(a.aec ? String(localized: "回声消除已开") : String(localized: "回声消除未开"))"))
                     .font(.caption2).foregroundStyle(Palette.secondary).lineLimit(1)
             }
             Spacer(minLength: 4)

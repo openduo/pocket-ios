@@ -31,6 +31,8 @@ struct AmbientSnapshot: Equatable {
     var speaking = false
     var speakingFiller = false
     var aec = false
+    /// The room is heard through a Bluetooth headset (no voice processing; it cancels its own echo).
+    var headset = false
     var route = ""
     var pressMuted = false
     var thermalWarning = false
@@ -243,7 +245,7 @@ final class AmbientController: @unchecked Sendable {
                 // Engine thread → our queue; one hop per capture block.
                 self?.queue.async { self?.uplink(framed) }
             }
-            edge.aec = VoiceIO.shared.voiceProcessing
+            edge.aec = VoiceIO.shared.echoCancelled
             decoder = try? OpusVoiceDecoder()
         } catch {
             if case VoiceIO.Failure.permissionDenied = error {
@@ -350,7 +352,7 @@ final class AmbientController: @unchecked Sendable {
         let aecBefore = edge.aec
         do {
             try VoiceIO.shared.rebuild()
-            edge.aec = VoiceIO.shared.voiceProcessing
+            edge.aec = VoiceIO.shared.echoCancelled
             if edge.aec != aecBefore {
                 // `aec` changed with the route: say it again in a fresh hello.
                 perform(edge.takeover())
@@ -366,7 +368,7 @@ final class AmbientController: @unchecked Sendable {
     /// route, say so in a fresh hello (design §7.3).
     private func routeChanged() {
         guard on else { return }
-        let aec = VoiceIO.shared.voiceProcessing
+        let aec = VoiceIO.shared.echoCancelled
         if aec != edge.aec {
             edge.aec = aec
             perform(edge.takeover())
@@ -699,6 +701,7 @@ final class AmbientController: @unchecked Sendable {
         s.speaking = edge.speaking
         s.speakingFiller = edge.speakingFiller
         s.aec = edge.aec
+        s.headset = on && VoiceIO.shared.headset
         s.route = on ? VoiceIO.routeName : ""
         s.pressMuted = edge.pressCount > 0
         s.interrupted = interrupted
