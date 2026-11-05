@@ -16,6 +16,8 @@ struct ConversationView: View {
     /// The window's own top inset while the system shows a vertical bar (the foldable); nil
     /// without one.
     @State private var verticalBar: CGFloat?
+    /// The hinge is partly open: the phone can stand (sight, docs/design/sight.md).
+    @State private var halfOpen = false
 
     enum Sheet: String, Identifiable {
         case settings, passport
@@ -36,10 +38,18 @@ struct ConversationView: View {
             .environment(\.verticalBarInset, verticalBar)
             // The call view belongs to the phone layout; the others draw the room themselves.
             .onChange(of: layout.roomInline, initial: true) { _, inline in if inline { model.ambientExpanded = false } }
+            .onChange(of: SightPosture.from(layout: layout, halfOpen: halfOpen,
+                                            charging: BatteryPower.shared.source == .external), initial: true) { _, p in
+                // The orientation tells which half is upright on the table; logged until the rear
+                // cameras' half is known (docs/design/sight.md).
+                let o = (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.effectiveGeometry.interfaceOrientation
+                AppLog.shared.log("sight_posture", ["posture": "\(p)", "orientation": o?.rawValue ?? -1])
+                SightController.shared.setPosture(p)
+            }
         }
         .overlay { if model.holding { HoldOverlay() } }
         .background {
-            if #available(iOS 27.1, *) { VerticalBarProbe { verticalBar = $0 } }
+            if #available(iOS 27.1, *) { VerticalBarProbe { verticalBar = $0 }.modifier(HalfOpenProbe { halfOpen = $0 }) }
         }
         .sheet(item: $sheet) { s in
             switch s {
@@ -682,4 +692,14 @@ struct TryBanner: View {
 /// Links the app opens. The update banner opens the TestFlight sign-up form the README links.
 enum AppLinks {
     static let signUp = URL(string: "https://docs.google.com/forms/d/e/1FAIpQLSfIUllzEsHU18l3q_K1SBo8FBx-GztPhzUKotWpp74mYAIH-A/viewform")!
+}
+
+/// Follows whether the hinge is partly open.
+@available(iOS 27.1, *)
+private struct HalfOpenProbe: ViewModifier {
+    var changed: (Bool) -> Void
+
+    func body(content: Content) -> some View {
+        content.onHingeChange { _, new in changed(new.hinge?.status == .partiallyOpen) }
+    }
 }

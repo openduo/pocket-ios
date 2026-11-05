@@ -107,6 +107,8 @@ struct PocketApp: App {
             if p == .active { Tailnet.shared.rebind() }
             if p == .active { PocketEngine.shared.appBecameActive() }
             if p == .active { AmbientController.shared.appBecameActive() }
+            // No camera outside the front: sight pauses when the app leaves it.
+            SightController.shared.setActive(p == .active)
             if p == .active {
                 AnswerNotice.requestPermissionIfUndecided()
                 AnswerNotice.withdrawAll(cursor: ConversationStore.shared.cursor())

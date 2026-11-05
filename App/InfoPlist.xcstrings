@@ -54,13 +54,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Taking a photo to send in the chat and scanning a pairing QR code use the camera."
+            "value": "The camera takes photos to send in the chat, scans pairing QR codes, and, in ambient mode, lets 多多 see you and the room. The picture goes only to the DuoDuo channel you set up."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "在对话中拍照上传和扫描配对二维码需要使用相机。"
+            "value": "在对话中拍照、扫描配对二维码，以及在环境模式下让多多看你和房间里的情况，需要使用摄像头。画面只发到你设置的多多频道。"
           }
         }
       }

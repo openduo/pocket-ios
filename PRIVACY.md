@@ -1,6 +1,6 @@
 # Privacy Policy — DuoDuo Pocket (多多随身)
 
-Effective 2026-10-25.
+Effective 2026-11-05.
 
 DuoDuo Pocket is a client for a DuoDuo assistant that **you run yourself**. OpenDuo runs one
 service for this app, the push relay described below, and it cannot read your messages.
@@ -11,6 +11,7 @@ service for this app, the push relay described below, and it cannot read your me
 |---|---|---|
 | Messages, voice recordings, photos and files you send | Only to the DuoDuo channel you configure, over your own Tailscale network | So your assistant can answer |
 | Microphone audio in ambient mode | Only to that channel, while ambient mode is on | Ambient conversation |
+| Camera video in ambient mode | Only to that channel, while ambient mode is on, the app is in front, the room asks for it, and the phone stands (half-folded, or closed on its side on a stand) or you turned 摄像头 (Camera) on. The phone keeps no recording | So your assistant can see you and the room |
 | The name of a place you arrived at (for example a building and its district and city), the arrival time, and the previous such place | Only to that channel, with your next message or ambient session, and only if you turned on 让多多知道我到了哪 (Let DuoDuo know where I've arrived) in Settings; off by default. Coordinates are never sent | So your assistant knows roughly where you are |
 | Tailscale sign-in and device identity | Tailscale, under Tailscale's own privacy policy | To join your tailnet |
 | The phone's Apple push address (device token) | The OpenDuo push relay, and through it Apple Push Notification service, only when your channel offers push | So DuoDuo's answers reach you while the app is not running |
@@ -43,7 +44,8 @@ when you exit.
 
 - Microphone: hold-to-talk and ambient mode.
 - Bluetooth: the optional Passport accessory.
-- Camera and Photos: only when you attach a picture.
+- Camera: taking a photo to attach, scanning a pairing QR code, and the ambient-mode video above.
+- Photos: only when you attach a picture.
 - Location, while using the app: centring the map when you send a location in the chat.
 - Location, always: only for 让多多知道我到了哪 (off by default). iOS tells the app when you have
   arrived somewhere and stayed; the phone turns the spot into a place name with Apple's map
@@ -67,7 +69,7 @@ Questions: <https://github.com/openduo/pocket-ios/issues>
 
 # 隐私政策 — 多多随身
 
-生效日期：2026-10-25。
+生效日期：2026-11-05。
 
 多多随身是**你自己部署的**多多助手的客户端。OpenDuo 只为这个 App 运营一项服务，即下面说明的推送中转，它读不到你的消息。
 
@@ -77,6 +79,7 @@ Questions: <https://github.com/openduo/pocket-ios/issues>
 |---|---|---|
 | 你发送的消息、录音、照片和文件 | 只发到你设置的多多频道，经过你自己的 Tailscale 网络 | 让你的助手回答 |
 | 环境模式下的麦克风声音 | 只在环境模式开启时发到这个频道 | 环境模式对话 |
+| 环境模式下的摄像头画面 | 只发到这个频道；只在环境模式开启、App 在前台、房间请求画面，并且手机立着（半折，或合上侧放在支架上）或你打开了「摄像头」时发送。手机不保存录像 | 让你的助手看到你和房间里的情况 |
 | 你到达的地点名称（例如一栋楼和它所在的区、城市）、到达时间，以及上一个这样的地点 | 只在你在设置里打开「让多多知道我到了哪」后（默认关闭），随你的下一条消息或环境模式会话发到这个频道；从不发送坐标 | 让你的助手大致知道你在哪 |
 | Tailscale 登录和设备身份 | Tailscale，适用 Tailscale 自己的隐私政策 | 加入你的 tailnet |
 | 手机的 Apple 推送地址（device token） | OpenDuo 推送中转，再经它到 Apple 推送服务；只在你的频道提供推送时 | App 没在运行时也能收到多多的回答 |
@@ -102,7 +105,8 @@ App 没在运行时，你的频道经 OpenDuo 推送中转（pocket-push.openduo
 
 - 麦克风：按住说话和环境模式。
 - 蓝牙：可选配件 Passport。
-- 相机和照片：只在你添加图片时使用。
+- 相机：拍照添加到对话、扫描配对二维码，以及上面说的环境模式摄像头画面。
+- 照片：只在你添加图片时使用。
 - 使用 App 期间的定位：在对话中发送位置时把地图移到你所在的地方。
 - 始终定位：只用于「让多多知道我到了哪」（默认关闭）。iOS 在你到达某处并停留时通知 App；手机用 Apple 的地图服务把这个位置换成地名，只保存地名、所在区域和到达时间。关闭这个设置会停止使用定位并删除保存的地点。
 - 本地网络：Tailscale 节点寻找到你自己设备的直连路径。

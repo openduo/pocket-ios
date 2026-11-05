@@ -42,7 +42,7 @@
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>多多随身通过蓝牙连接 Passport，接收按键录音并显示回复。</string>
 	<key>NSCameraUsageDescription</key>
-	<string>在对话中拍照上传和扫描配对二维码需要使用相机。</string>
+	<string>在对话中拍照、扫描配对二维码，以及在环境模式下让多多看你和房间里的情况，需要使用摄像头。画面只发到你设置的多多频道。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>内置的 Tailscale 节点会探测局域网以建立直连。</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
