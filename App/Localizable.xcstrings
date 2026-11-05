@@ -1,6 +1,206 @@
 {
   "sourceLanguage": "zh-Hans",
   "strings": {
+    "摄像头": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Camera"
+          }
+        }
+      }
+    },
+    "打开摄像头": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn camera on"
+          }
+        }
+      }
+    },
+    "关闭摄像头": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn camera off"
+          }
+        }
+      }
+    },
+    "摄像头已开": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Camera on"
+          }
+        }
+      }
+    },
+    "换前置摄像头": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch to front camera"
+          }
+        }
+      }
+    },
+    "换后置摄像头": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch to rear camera"
+          }
+        }
+      }
+    },
+    "后置摄像头画面": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rear camera view"
+          }
+        }
+      }
+    },
+    "这台手机编不了多多要的视频格式，摄像头用不了": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This phone cannot encode the video 多多 asks for; the camera is unavailable"
+          }
+        }
+      }
+    },
+    "这台手机没有这个摄像头": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This phone has no such camera"
+          }
+        }
+      }
+    },
+    "这个摄像头拍不了多多要的画面大小": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This camera cannot capture the size 多多 asks for"
+          }
+        }
+      }
+    },
+    "房间的频道版本太旧，收不了这台手机的画面": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The room's channel is too old to take this phone's video"
+          }
+        }
+      }
+    },
+    "房间关了这台手机的摄像头：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The room turned this phone's camera off: %@"
+          }
+        }
+      }
+    },
+    "视频编码出错，摄像头已停": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Video encoding failed; the camera stopped"
+          }
+        }
+      }
+    },
+    "房间没接收这台手机的画面，摄像头已关": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The room did not accept this phone's video; the camera is off"
+          }
+        }
+      }
+    },
+    "把手机半折立起来，多多就能看到房间": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stand the phone half-folded so 多多 can see the room"
+          }
+        }
+      }
+    },
+    "App 在后台，摄像头已暂停": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Camera paused while the app is in the background"
+          }
+        }
+      }
+    },
+    "摄像头被其他应用占用，结束后自动恢复": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Another app is using the camera; it resumes when that's done"
+          }
+        }
+      }
+    },
+    "手机过热，摄像头已暂停": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Phone too hot; camera paused"
+          }
+        }
+      }
+    },
+    "摄像头在下半边，把手机转过来": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The camera is on the lower half; turn the phone around"
+          }
+        }
+      }
+    },
+    "没有摄像头权限，去设置里打开": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No camera access; turn it on in Settings"
+          }
+        }
+      }
+    },
     " ▍": {
       "localizations": {
         "en": {

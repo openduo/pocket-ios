@@ -57,6 +57,7 @@ struct AmbientView: View {
 
             HStack(spacing: 0) {
                 AmbientControl.silence(a, size: size)
+                if a.sight.offered { AmbientControl.camera(a, size: size) }
                 AmbientControl.hush(a, size: size)
                 AmbientControl(icon: transcript ? "text.bubble.fill" : "text.bubble",
                                label: transcript ? String(localized: "隐藏对话") : String(localized: "对话"),
@@ -80,10 +81,12 @@ struct AmbientView: View {
         Spacer(minLength: 8).layoutPriority(-2)
         // The mark gives way first: at large text sizes it shrinks so the status, captions and
         // the controls stay on screen.
-        LogoMark(mood: model.presence.mood)
-            .frame(maxWidth: 280, maxHeight: 280)
-            .aspectRatio(1, contentMode: .fit)
-            .layoutPriority(-1)
+        Group {
+            if SightViewfinder.shows(a) { SightViewfinder() } else { LogoMark(mood: model.presence.mood) }
+        }
+        .frame(maxWidth: 280, maxHeight: 280)
+        .aspectRatio(1, contentMode: .fit)
+        .layoutPriority(-1)
         VStack(spacing: 6) {
             Text(model.ambientTitle).font(.title.weight(.bold)).foregroundStyle(Palette.text).lineLimit(1)
             if let step = model.ambientToolStep {
@@ -103,6 +106,8 @@ struct AmbientView: View {
         .padding(.top, 10)
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: .combine)
+        // Outside the combined element: the flip is its own button.
+        SightStatus().padding(.top, 4)
 
         takeBack(a)
 

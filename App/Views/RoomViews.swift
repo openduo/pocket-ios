@@ -50,6 +50,7 @@ extension AppModel {
         case .failed(let why): return why
         case .starting: return a.route
         default:
+            if a.sight == .hint, let hint = sightLine { return hint }
             if a.silent { return String(localized: "已静音：还在听，回复只显示在屏幕上") }
             if a.speaking { return a.speakingFiller ? String(localized: "马上回答你") : String(localized: "说话就能打断它") }
             // A headset needs no echo cancellation: only the route is worth saying.
@@ -137,7 +138,7 @@ struct AmbientControl: View {
     }
 }
 
-/// 静音 · 别说了 · 关闭 while ambient is on; 开环境模式 while it is off; the way out of a seat
+/// 静音 · (摄像头) · 别说了 · 关闭 while ambient is on, 摄像头 where the phone stands and the room can see; 开环境模式 while it is off; the way out of a seat
 /// taken or a failure. A layout's own controls (会话, 对话) join the row as equal members.
 struct RoomControls<Leading: View, Trailing: View>: View {
     @EnvironmentObject var model: AppModel
@@ -159,6 +160,7 @@ struct RoomControls<Leading: View, Trailing: View>: View {
                 AmbientControl.off(size: size)
             } else if a.isOn {
                 AmbientControl.silence(a, size: size)
+                if a.sight.offered { AmbientControl.camera(a, size: size) }
                 AmbientControl.hush(a, size: size)
                 AmbientControl.off(size: size)
             } else {
@@ -187,9 +189,13 @@ struct BigRoom: View {
         let t = model.roomText
         HStack(alignment: .center, spacing: 28) {
             VStack(spacing: 10) {
-                LogoMark(mood: model.presence.mood).frame(width: 210, height: 210)
+                Group {
+                    if SightViewfinder.shows(model.ambient) { SightViewfinder() } else { LogoMark(mood: model.presence.mood) }
+                }
+                .frame(width: 210, height: 210)
                 Text(model.roomStatus).font(.headline).foregroundStyle(Palette.secondary)
                     .lineLimit(2).multilineTextAlignment(.center)
+                SightStatus()
             }
             .frame(width: 210)
             VStack(alignment: .leading, spacing: 14) {
@@ -231,6 +237,9 @@ struct RoomColumn: View {
             Spacer(minLength: 0)
             LogoMark(mood: model.presence.mood).frame(width: 185, height: 185)
             Text(model.roomStatus).font(.headline).foregroundStyle(Palette.secondary)
+            if model.ambient.sight == .hint, let hint = model.sightLine {
+                Text(hint).font(.footnote).foregroundStyle(Palette.secondary).multilineTextAlignment(.center)
+            }
             VStack(alignment: .leading, spacing: 12) {
                 if let q = t.question {
                     Text(q).font(.title3).foregroundStyle(Palette.secondary).lineLimit(2)

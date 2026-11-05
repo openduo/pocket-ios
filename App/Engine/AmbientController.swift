@@ -38,6 +38,10 @@ struct AmbientSnapshot: Equatable {
     var thermalWarning = false
     /// The audio session is interrupted, whatever `phase` shows (a failure outranks it there).
     var interrupted = false
+    /// Sight on this phone (docs/design/sight.md).
+    var sight = SightState.notOffered
+    /// The phone is in a hand: the camera can flip, and the rear one shows a viewfinder.
+    var sightInHand = false
 
     var isOn: Bool { phase != .off }
 }
@@ -71,6 +75,9 @@ final class AmbientController: @unchecked Sendable {
     private var liveConn: String?
     /// The `audio` switch the open connection was opened with.
     private var liveAudio: Bool?
+    /// The `media` framing version the open connection's first `meta` confirmed: binary frames
+    /// carry the kind byte only then. The offer is kept by `live`.
+    private var liveMedia: Int?
     /// The read aloud in progress: its request, decoder, framing and blocks not yet played.
     private var read: StreamRequest?
     private var readDecoder: OpusVoiceDecoder?
@@ -128,6 +135,7 @@ final class AmbientController: @unchecked Sendable {
         nc.addObserver(forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: nil) { [weak self] _ in
             self?.queue.async { self?.publish() }
         }
+        SightController.shared.onChange = { [weak self] in self?.queue.async { self?.publish() } }
     }
 
     func snapshot() -> AmbientSnapshot {
@@ -169,6 +177,7 @@ final class AmbientController: @unchecked Sendable {
     /// goes on that connection with the first encoded packet.
     private func newEdge() {
         edge = AmbientEdge(room: settings.room)
+        edge.framed = liveMedia != nil
         if let liveConn, live.isOpen { perform(edge.frame(["type": "meta", "conn": liveConn])) }
     }
 
@@ -182,6 +191,7 @@ final class AmbientController: @unchecked Sendable {
             interruption.clear()
             AmbientNotice.withdraw()
             AppLog.shared.log("ambient_off")
+            SightController.shared.ambientEnded()
             // The channel's mic switch is a room control that outlives this socket: do not leave
             // the room's mic off for the next edge (`on` = mic on).
             if edge.helloSent, edge.muted { live.send(json: ["type": "mute", "on": true]) }
@@ -272,8 +282,10 @@ final class AmbientController: @unchecked Sendable {
     /// The held connection is gone (closed, replaced): nothing of it carries over.
     private func liveReplaced() {
         VoiceIO.shared.setAmbientEncoding(false)
+        SightController.shared.connectionEnded()
         liveConn = nil
         liveAudio = nil
+        liveMedia = nil
         surfaceSent = nil
         perform(edge.socketClosed())
     }
@@ -283,6 +295,7 @@ final class AmbientController: @unchecked Sendable {
     /// Opens the room's `/live` connection, replacing the held one. Blocking.
     func openLive(_ s: ChannelSettings, since: Int?, timeout: TimeInterval) throws {
         // The old connection's state ends before the new one's first frame can arrive.
+        let offered = live.omitMedia.withLock { $0 } ? nil : LiveMedia.version
         let (audio, ambient) = queue.sync {
             liveReplaced()
             publish()
@@ -292,7 +305,7 @@ final class AmbientController: @unchecked Sendable {
         // Ambient mode's connection carries a pending arrival; the channel gives it to the
         // session's first turn. The upgrade succeeding counts as reported.
         let place = ambient ? ArrivalMonitor.shared.report() : nil
-        try live.open(path: ChannelPaths.live(room: s.room, since: since, audio: audio),
+        try live.open(path: ChannelPaths.live(room: s.room, since: since, audio: audio, media: offered), media: offered,
                       headers: place?.headers ?? [:], timeout: timeout)
         ArrivalMonitor.shared.settle(place, accepted: true)
         // A new connection starts unreported, whatever reached the old one meanwhile.
@@ -463,8 +476,34 @@ final class AmbientController: @unchecked Sendable {
     private func uplink(_ framed: Data) {
         guard on, !linkPaused else { return }
         if !edge.capturing { perform(edge.packetEncoded()) }
-        if edge.sendsAudio, live.isOpen { live.send(framed: framed) }
+        guard edge.sendsAudio, live.isOpen else { return }
+        if edge.framed {
+            guard let kinded = MediaFraming.audio(lengthPrefixed: framed) else { return }
+            live.send(framed: kinded)
+        } else {
+            live.send(framed: framed)
+        }
     }
+
+    /// One binary video frame, sent while this framed connection holds the seat.
+    func sendSight(_ frame: Data) {
+        queue.async { [self] in
+            guard on, edge.framed, edge.sendsAudio, live.isOpen else { return }
+            live.send(binary: frame)
+        }
+    }
+
+    /// The asked camera does not run (`camera_declined`).
+    func sendDecline(_ reason: String) {
+        queue.async { [self] in
+            guard on, edge.framed, edge.sendsAudio, live.isOpen else { return }
+            live.send(json: ["type": "camera_declined", "reason": reason])
+            AppLog.shared.log("edge_send", ["type": "camera_declined", "reason": reason])
+        }
+    }
+
+    /// The uplink has bytes waiting: the camera skips a frame.
+    var uplinkBusy: Bool { live.busy }
 
     // MARK: socket
 
@@ -483,13 +522,37 @@ final class AmbientController: @unchecked Sendable {
 
     private func text(_ obj: [String: Any]) {
         let type = obj["type"] as? String
+        if type == "meta", obj["conn"] is String, liveConn == nil {
+            let offered = live.offeredMedia.withLock { $0 }
+            switch LiveMedia.answer(obj[LiveMedia.param], offered: offered) {
+            case .unframed:
+                liveMedia = nil
+            case .framed(let v):
+                liveMedia = v
+            case .invalid(let why):
+                // The two ends disagree on framing: this process stops offering it and reconnects.
+                AppLog.shared.log("live_media_refused", ["why": why])
+                live.omitMedia.withLock { $0 = true }
+                liveReplaced()
+                publish()
+                live.close()
+                PocketEngine.shared.ensureLive("media_refused")
+                return
+            }
+            if offered != nil { AppLog.shared.log("live_media", ["media": liveMedia ?? 0]) }
+            edge.framed = liveMedia != nil
+        }
         if type == "meta", let c = obj["conn"] as? String {
             liveConn = c
             VoiceIO.shared.setAmbientEncoding(true)
         }
         // Only audio-plane frames matter here; `PocketEngine` handles the conversation. They
         // matter with ambient off too: an audio-on connection is a mouth in message mode.
-        guard type == "meta" || type == "audio_params" || type == "speech" || type == "stop_audio" else { return }
+        guard type == "meta" || type == "audio_params" || type == "speech" || type == "stop_audio" || type == "camera"
+            || type == "key_frame" else { return }
+        // A camera frame belongs to a connection whose `meta` was read: one from a replaced socket
+        // must not ask the next connection's camera.
+        if type == "camera" || type == "key_frame", liveConn == nil { return }
         let before = (edge.role, edge.roomState)
         if type == "speech" { endStats("replaced") }
         perform(edge.frame(obj))
@@ -645,6 +708,10 @@ final class AmbientController: @unchecked Sendable {
                 stopAll()
             case .warn(let why):
                 AppLog.shared.log("ambient_warn", ["why": why])
+            case .camera(let ask, let bound, let reason):
+                SightController.shared.asked(ask, maxFrameBytes: bound, reason: reason)
+            case .keyFrame:
+                SightController.shared.keyFrame()
             }
         }
     }
@@ -705,6 +772,11 @@ final class AmbientController: @unchecked Sendable {
         s.route = on ? VoiceIO.routeName : ""
         s.pressMuted = edge.pressCount > 0
         s.interrupted = interrupted
+        // Only the capture master is asked for a camera, and only while it captures.
+        let master = on && s.phase == .listening && live.isOpen
+        SightController.shared.setMaster(master)
+        s.sight = master ? SightController.shared.state : .notOffered
+        s.sightInHand = SightController.shared.inHand
         // `.serious` is the level at which Apple asks apps to reduce work.
         s.thermalWarning = ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue
         snapLock.lock()

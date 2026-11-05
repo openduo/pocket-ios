@@ -294,6 +294,14 @@ final class LiveSocket: NSObject, TsbridgeLiveHandlerProtocol, @unchecked Sendab
     /// Writes go through their own queue: a write may block up to the bridge's write timeout on a
     /// dead path, and that must never stall capture or playback.
     private let sendQueue = DispatchQueue(label: "pocket.live.send", qos: .userInitiated)
+    /// Bytes handed to `sendQueue` and not yet written: the uplink is busy while it is above 0.
+    private let pending = Locked(0)
+    /// Set once a channel answered `media` with a version this app did not offer: every later
+    /// connection of this process omits `media` and runs without binary framing.
+    let omitMedia = Locked(false)
+    /// The `media` version the held socket offered when it was dialled. Kept here, not by the
+    /// caller, so a late report about the previous socket cannot change it.
+    let offeredMedia = Locked<Int?>(nil)
 
     override init() {
         super.init()
@@ -304,7 +312,8 @@ final class LiveSocket: NSObject, TsbridgeLiveHandlerProtocol, @unchecked Sendab
 
     /// Dials `path` (`ChannelPaths.live`) with extra upgrade `headers`, replacing any held socket
     /// without a close report.
-    func open(path: String, headers: [String: String] = [:], timeout: TimeInterval) throws {
+    func open(path: String, media: Int?, headers: [String: String] = [:], timeout: TimeInterval) throws {
+        offeredMedia.withLock { $0 = media }
         if TryMode.active { return TryChannel.shared.openLive(self, path: path) }
         try Tailnet.shared.checkPaired(path)
         try Tailnet.shared.up(timeout: timeout)
@@ -343,7 +352,25 @@ final class LiveSocket: NSObject, TsbridgeLiveHandlerProtocol, @unchecked Sendab
         if TryMode.active { return TryChannel.shared.liveReceived(json) }
         guard let d = try? JSONSerialization.data(withJSONObject: json) else { return }
         let s = String(decoding: d, as: UTF8.self)
-        sendQueue.async { var e: NSError?; TsbridgeLiveSendText(s, &e) }
+        enqueue(d.count) { var e: NSError?; TsbridgeLiveSendText(s, &e) }
+    }
+
+    /// The uplink has bytes waiting to be written: the next video frame is skipped before it is
+    /// encoded, as the web edge does while its socket buffers.
+    var busy: Bool { pending.withLock { $0 > 0 } }
+
+    private func enqueue(_ bytes: Int, _ write: @escaping () -> Void) {
+        pending.withLock { $0 += bytes }
+        sendQueue.async { [pending] in
+            write()
+            pending.withLock { $0 -= bytes }
+        }
+    }
+
+    /// One binary frame (a video frame).
+    func send(binary: Data) {
+        if TryMode.active || binary.isEmpty { return }
+        enqueue(binary.count) { var e: NSError?; TsbridgeLiveSendBinary(binary, &e) }
     }
 
     /// Sends one capture block's packets, one frame each, in one bridge call: each packet behind
@@ -351,7 +378,7 @@ final class LiveSocket: NSObject, TsbridgeLiveHandlerProtocol, @unchecked Sendab
     /// In try-it mode the microphone's packets go nowhere: nothing leaves the phone.
     func send(framed: Data) {
         if TryMode.active || framed.isEmpty { return }
-        sendQueue.async { var e: NSError?; TsbridgeLiveSendBinaries(framed, &e) }
+        enqueue(framed.count) { var e: NSError?; TsbridgeLiveSendBinaries(framed, &e) }
     }
 
     func onLiveText(_ text: String?) { if let text { onText?(text) } }
