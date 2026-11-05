@@ -203,8 +203,10 @@ public enum ChannelPaths {
     /// The room's one `/live` connection; `since` asks for the rows after that cursor first.
     /// `audio` is the surface's mouth switch, fixed for the connection's life: with it on, the
     /// connection receives the room's realtime speech when it is a mouth.
-    public static func live(room: String, since: Int? = nil, audio: Bool) -> String {
+    /// `media`: the binary framing version offered (`LiveMedia`), or nil for none.
+    public static func live(room: String, since: Int? = nil, audio: Bool, media: Int? = nil) -> String {
         "/live?room=" + q(room) + (since.map { "&since=\($0)" } ?? "") + "&audio=" + (audio ? "1" : "0")
+            + (media.map { "&\(LiveMedia.param)=\($0)" } ?? "")
     }
     /// `POST /api/speech`: read a text aloud on request.
     public static func speech(room: String) -> String { "/api/speech?room=" + q(room) }

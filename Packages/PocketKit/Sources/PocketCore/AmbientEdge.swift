@@ -68,6 +68,12 @@ public struct AmbientEdge: Equatable {
         /// Protocol mismatch the controller must surface and stop on.
         case fatal(String)
         case warn(String)
+        /// The cerebellum's camera ask for this capture master, or nil to stop
+        /// (docs/design/sight.md); `maxFrameBytes` bounds each binary video frame. A stop the
+        /// channel made for this phone carries its `reason`.
+        case camera(SightAsk?, maxFrameBytes: Int, reason: String?)
+        /// Encode the next video frame as a key frame.
+        case keyFrame
     }
 
     // Connection.
@@ -78,6 +84,9 @@ public struct AmbientEdge: Equatable {
     /// An encoded packet exists (capture is live).
     public private(set) var capturing = false
     public var aec = false
+    /// The connection's binary frames carry the kind byte: the first `meta` confirmed `media`.
+    /// Without it there is no camera.
+    public var framed = false
     public private(set) var pressCount = 0
     public var room = ""
 
@@ -216,8 +225,8 @@ public struct AmbientEdge: Equatable {
 
     // MARK: downlink
 
-    /// One text frame (already decoded). Returns the actions; frames outside the audio plane
-    /// return nothing.
+    /// One text frame (already decoded). Returns the actions; frames outside the audio and camera
+    /// planes return nothing.
     public mutating func frame(_ f: [String: Any]) -> [Action] {
         switch f["type"] as? String {
         case "meta":
@@ -255,6 +264,27 @@ public struct AmbientEdge: Equatable {
             playedMs = 0
             lastReported = -1
             return out
+        case "camera":
+            guard let capture = f["capture"] else { return [.warn("camera without capture (ignored)")] }
+            let bound = Wire.integer(f["max_frame_bytes"]).flatMap { $0 > 0 ? $0 : nil }
+            if capture is NSNull {
+                // A stop whatever `reason` and the bound hold; only a non-empty string is shown.
+                let reason = (f["reason"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                return [.camera(nil, maxFrameBytes: bound ?? 0, reason: reason)]
+            }
+            // A channel that did not confirm framing cannot take this phone's video: decline, and
+            // show it as a stop for that reason.
+            guard framed else {
+                return [.send(["type": "camera_declined", "reason": "unframed_channel"]),
+                        .camera(nil, maxFrameBytes: 0, reason: "unframed_channel")]
+            }
+            guard let bound else { return [.warn("camera without max_frame_bytes (ignored)")] }
+            guard let c = capture as? [String: Any], let ask = SightAsk(c) else {
+                return [.warn("camera ask not understood (ignored)")]
+            }
+            return [.camera(ask, maxFrameBytes: bound, reason: nil)]
+        case "key_frame":
+            return [.keyFrame]
         case "stop_audio":
             // A read has no room speech under it: the reply it stopped was cleared already.
             if reading { return [] }
